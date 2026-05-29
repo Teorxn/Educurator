@@ -35,3 +35,41 @@ export const uploadDoc = (file: File, onProgress?: (pct: number) => void) => {
     },
   })
 }
+
+// ── Suggestions ──────────────────────────────────────────────────────────────
+
+export interface Suggestion {
+  id: string
+  document_id: string
+  document_name: string | null
+  type: 'redundancy' | 'conflict' | 'faq'
+  description: string
+  source_doc_id: string
+  source_chunk_ids: string[]
+  confidence_score: number
+  reasoning: string | null
+  status: 'pending' | 'approved' | 'rejected'
+  reviewed_by: string | null
+  review_reason: string | null
+  created_at: string
+  reviewed_at: string | null
+}
+
+export interface SuggestionsResponse {
+  items: Suggestion[]
+  total: number
+}
+
+export const getSuggestions = (params?: {
+  status?: string
+  type?: string
+  document_id?: string
+  page?: number
+  limit?: number
+}) => api.get<SuggestionsResponse>('/api/suggestions', { params })
+
+export const approveSuggestion = (id: string) =>
+  api.post<{ id: string; status: string; message: string }>(`/api/suggestions/${id}/approve`)
+
+export const rejectSuggestion = (id: string, reason: string) =>
+  api.post<{ id: string; status: string; message: string }>(`/api/suggestions/${id}/reject`, { reason })
