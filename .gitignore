@@ -1,0 +1,36 @@
+# ── Node.js / Frontend ────────────────────────────────────────────────────
+node_modules/
+dist/
+.vite/
+
+# ── Python / Backend ──────────────────────────────────────────────────────
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+env/
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+
+# ── Secrets ───────────────────────────────────────────────────────────────
+.env
+.env.local
+.env.*.local
+
+# ── Data folders (keep structure, ignore content) ─────────────────────────
+data/uploads/*
+data/processed/*
+data/archived/*
+!data/uploads/.gitkeep
+!data/processed/.gitkeep
+!data/archived/.gitkeep
+
+# ── IDE / OS ──────────────────────────────────────────────────────────────
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
