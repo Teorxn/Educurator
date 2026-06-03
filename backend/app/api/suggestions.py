@@ -1,12 +1,11 @@
 """
 Épica 4 — Gestión de Sugerencias
-HU-09: Consultar sugerencias
+HU-09: Consultar sugerencias generadas
 HU-11: Aprobar sugerencias
 HU-12: Rechazar sugerencias
-HU-14: Revisar FAQs (mismo flujo, type=faq)
-HU-15: Proporcionar retroalimentación
+HU-14: Revisar FAQs (type=faq)
+HU-15: Proporcionar retroalimentación al agente
 """
-import json
 import uuid
 from datetime import datetime, timezone
 
@@ -14,21 +13,25 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.dependencies import get_current_user
+from app.api.dependencies import get_current_user, require_role
 from app.database import get_db
 from app.models.models import (
+    Document,
     DocumentHistory,
+    DocumentStatus,
     FeedbackPattern,
     Suggestion,
     SuggestionStatus,
-    SuggestionType,
     User,
+    UserRole,
 )
 from app.schemas.suggestions import (
+    ApproveResponse,
     FeedbackRequest,
     RejectRequest,
-    SuggestionResponse,
+    RejectResponse,
     SuggestionsListResponse,
+    SuggestionResponse,
 )
 
 router = APIRouter(prefix="/api/suggestions", tags=["suggestions"])
@@ -41,7 +44,7 @@ router = APIRouter(prefix="/api/suggestions", tags=["suggestions"])
 async def list_suggestions(
     status_filter: str | None = Query(None, alias="status"),
     type_filter: str | None = Query(None, alias="type"),
-    doc_id: uuid.UUID | None = Query(None),
+    document_id: uuid.UUID | None = Query(None),
     page: int = Query(1, ge=1),
     limit: int = Query(20, ge=1, le=100),
     db: AsyncSession = Depends(get_db),
@@ -59,124 +62,146 @@ async def list_suggestions(
             pass
 
     if type_filter:
-        try:
-            t = SuggestionType(type_filter)
-            query = query.where(Suggestion.type == t)
-            count_q = count_q.where(Suggestion.type == t)
-        except ValueError:
-            pass
+        query = query.where(Suggestion.type == type_filter)
+        count_q = count_q.where(Suggestion.type == type_filter)
 
-    if doc_id:
-        query = query.where(Suggestion.doc_id == doc_id)
-        count_q = count_q.where(Suggestion.doc_id == doc_id)
+    if document_id:
+        query = query.where(Suggestion.document_id == document_id)
+        count_q = count_q.where(Suggestion.document_id == document_id)
 
     total = (await db.execute(count_q)).scalar_one()
-    items = (await db.execute(query.offset((page - 1) * limit).limit(limit))).scalars().all()
+    items = (
+        await db.execute(query.offset((page - 1) * limit).limit(limit))
+    ).scalars().all()
 
-    return SuggestionsListResponse(items=list(items), total=total)
+    result = []
+    for s in items:
+        doc = (
+            await db.execute(select(Document).where(Document.id == s.document_id))
+        ).scalar_one_or_none()
+        resp = SuggestionResponse.model_validate(s)
+        resp.document_name = doc.filename if doc else None
+        result.append(resp)
 
-
-# ── GET /api/suggestions/{id} ────────────────────────────────────────────────
-
-
-@router.get("/{suggestion_id}", response_model=SuggestionResponse)
-async def get_suggestion(
-    suggestion_id: uuid.UUID,
-    db: AsyncSession = Depends(get_db),
-    _: User = Depends(get_current_user),
-):
-    s = (await db.execute(select(Suggestion).where(Suggestion.id == suggestion_id))).scalar_one_or_none()
-    if not s:
-        raise HTTPException(status_code=404, detail="Suggestion not found")
-    return s
+    return SuggestionsListResponse(items=result, total=total)
 
 
 # ── POST /api/suggestions/{id}/approve ───────────────────────────────────────
 
 
-@router.post("/{suggestion_id}/approve", response_model=SuggestionResponse)
+@router.post("/{suggestion_id}/approve", response_model=ApproveResponse)
 async def approve_suggestion(
     suggestion_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_role(UserRole.instructor, UserRole.admin)),
 ):
-    s = (await db.execute(select(Suggestion).where(Suggestion.id == suggestion_id))).scalar_one_or_none()
-    if not s:
+    suggestion = (
+        await db.execute(select(Suggestion).where(Suggestion.id == suggestion_id))
+    ).scalar_one_or_none()
+
+    if not suggestion:
         raise HTTPException(status_code=404, detail="Suggestion not found")
-    if s.status != SuggestionStatus.pending:
-        raise HTTPException(status_code=400, detail="Only pending suggestions can be approved")
+    if suggestion.status != SuggestionStatus.pending:
+        raise HTTPException(status_code=400, detail="Suggestion is not pending")
 
-    s.status = SuggestionStatus.approved
-    s.reviewed_by = current_user.id
-    s.reviewed_at = datetime.now(timezone.utc)
+    old_status = suggestion.status.value
+    suggestion.status = SuggestionStatus.approved
+    suggestion.reviewed_by = current_user.id
+    suggestion.reviewed_at = datetime.now(timezone.utc)
 
-    # Audit trail — HU-17
+    doc = (
+        await db.execute(select(Document).where(Document.id == suggestion.document_id))
+    ).scalar_one_or_none()
+    if doc:
+        doc.status = DocumentStatus.approved
+
     history = DocumentHistory(
-        doc_id=s.doc_id,
-        action="suggestion_approved",
+        doc_id=suggestion.document_id,
+        action="approved",
         performed_by=current_user.id,
-        before_state=json.dumps({"suggestion_status": "pending"}),
-        after_state=json.dumps({"suggestion_status": "approved", "suggestion_id": str(s.id)}),
+        before_content={"status": old_status},
+        after_content={"status": "approved", "suggestion_id": str(suggestion.id)},
+        reason=None,
     )
     db.add(history)
 
-    # Feedback pattern — HU-15/16
-    pattern = FeedbackPattern(
-        suggestion_id=s.id,
+    feedback = FeedbackPattern(
+        suggestion_id=suggestion.id,
         feedback_type="approve",
-        context=json.dumps({"suggestion_type": s.type.value, "doc_id": str(s.doc_id)}),
+        context=str({"type": suggestion.type.value, "confidence": suggestion.confidence_score}),
     )
-    db.add(pattern)
+    db.add(feedback)
 
     await db.commit()
-    await db.refresh(s)
-    return s
+    await db.refresh(suggestion)
+
+    return ApproveResponse(
+        id=suggestion.id,
+        status=suggestion.status,
+        message="Sugerencia aprobada correctamente",
+    )
 
 
 # ── POST /api/suggestions/{id}/reject ────────────────────────────────────────
 
 
-@router.post("/{suggestion_id}/reject", response_model=SuggestionResponse)
+@router.post("/{suggestion_id}/reject", response_model=RejectResponse)
 async def reject_suggestion(
     suggestion_id: uuid.UUID,
     body: RejectRequest,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_role(UserRole.instructor, UserRole.admin)),
 ):
-    s = (await db.execute(select(Suggestion).where(Suggestion.id == suggestion_id))).scalar_one_or_none()
-    if not s:
+    if not body.reason or not body.reason.strip():
+        raise HTTPException(status_code=400, detail="Reason is required for rejection")
+
+    suggestion = (
+        await db.execute(select(Suggestion).where(Suggestion.id == suggestion_id))
+    ).scalar_one_or_none()
+
+    if not suggestion:
         raise HTTPException(status_code=404, detail="Suggestion not found")
-    if s.status != SuggestionStatus.pending:
-        raise HTTPException(status_code=400, detail="Only pending suggestions can be rejected")
+    if suggestion.status != SuggestionStatus.pending:
+        raise HTTPException(status_code=400, detail="Suggestion is not pending")
 
-    s.status = SuggestionStatus.rejected
-    s.rejection_reason = body.reason
-    s.reviewed_by = current_user.id
-    s.reviewed_at = datetime.now(timezone.utc)
+    old_status = suggestion.status.value
+    suggestion.status = SuggestionStatus.rejected
+    suggestion.reviewed_by = current_user.id
+    suggestion.review_reason = body.reason.strip()
+    suggestion.reviewed_at = datetime.now(timezone.utc)
 
-    # Audit trail — HU-17
+    doc = (
+        await db.execute(select(Document).where(Document.id == suggestion.document_id))
+    ).scalar_one_or_none()
+    if doc:
+        doc.status = DocumentStatus.rejected
+
     history = DocumentHistory(
-        doc_id=s.doc_id,
-        action="suggestion_rejected",
+        doc_id=suggestion.document_id,
+        action="rejected",
         performed_by=current_user.id,
-        reason=body.reason,
-        before_state=json.dumps({"suggestion_status": "pending"}),
-        after_state=json.dumps({"suggestion_status": "rejected", "reason": body.reason}),
+        before_content={"status": old_status},
+        after_content={"status": "rejected", "suggestion_id": str(suggestion.id)},
+        reason=body.reason.strip(),
     )
     db.add(history)
 
-    # Feedback pattern — HU-15/16
-    pattern = FeedbackPattern(
-        suggestion_id=s.id,
+    feedback = FeedbackPattern(
+        suggestion_id=suggestion.id,
         feedback_type="reject",
-        comment=body.reason,
-        context=json.dumps({"suggestion_type": s.type.value, "doc_id": str(s.doc_id)}),
+        comment=body.reason.strip(),
+        context=str({"type": suggestion.type.value, "confidence": suggestion.confidence_score}),
     )
-    db.add(pattern)
+    db.add(feedback)
 
     await db.commit()
-    await db.refresh(s)
-    return s
+    await db.refresh(suggestion)
+
+    return RejectResponse(
+        id=suggestion.id,
+        status=suggestion.status,
+        message="Sugerencia rechazada",
+    )
 
 
 # ── POST /api/suggestions/{id}/feedback ──────────────────────────────────────
@@ -187,17 +212,19 @@ async def add_feedback(
     suggestion_id: uuid.UUID,
     body: FeedbackRequest,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    _: User = Depends(get_current_user),
 ):
-    s = (await db.execute(select(Suggestion).where(Suggestion.id == suggestion_id))).scalar_one_or_none()
-    if not s:
+    suggestion = (
+        await db.execute(select(Suggestion).where(Suggestion.id == suggestion_id))
+    ).scalar_one_or_none()
+    if not suggestion:
         raise HTTPException(status_code=404, detail="Suggestion not found")
 
-    pattern = FeedbackPattern(
-        suggestion_id=s.id,
-        feedback_type=s.status.value,
+    feedback = FeedbackPattern(
+        suggestion_id=suggestion_id,
+        feedback_type=suggestion.status.value,
         comment=body.comment,
-        context=json.dumps({"suggestion_type": s.type.value, "user_id": str(current_user.id)}),
+        context=str({"type": suggestion.type.value}),
     )
-    db.add(pattern)
+    db.add(feedback)
     await db.commit()
