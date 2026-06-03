@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from app.models.models import SuggestionStatus, SuggestionType
 
@@ -10,16 +10,16 @@ class SuggestionResponse(BaseModel):
     id: uuid.UUID
     document_id: uuid.UUID
     type: SuggestionType
-    description: str
-    source_doc_id: str
-    source_chunk_ids: list[str]
-    confidence_score: float
-    reasoning: str | None
     status: SuggestionStatus
-    reviewed_by: uuid.UUID | None
+    description: str
+    reasoning: str | None
+    confidence_score: float
+    source_chunk_ids: list
+    source_doc_id: str
     review_reason: str | None
-    created_at: datetime
+    reviewed_by: uuid.UUID | None
     reviewed_at: datetime | None
+    created_at: datetime
     document_name: str | None = None
 
     model_config = {"from_attributes": True}
@@ -37,10 +37,36 @@ class ApproveResponse(BaseModel):
 
 
 class RejectRequest(BaseModel):
-    reason: str
+    reason: str = Field(..., min_length=1, description="Motivo del rechazo")
 
 
 class RejectResponse(BaseModel):
     id: uuid.UUID
     status: SuggestionStatus
     message: str
+
+
+class FeedbackRequest(BaseModel):
+    comment: str | None = None
+
+
+class DocumentHistoryEntry(BaseModel):
+    id: uuid.UUID
+    doc_id: uuid.UUID
+    action: str
+    performed_by: uuid.UUID | None
+    timestamp: datetime
+    before_content: dict | None
+    after_content: dict | None
+    reason: str | None
+
+    model_config = {"from_attributes": True}
+
+
+class AnalyticsResponse(BaseModel):
+    total_documents: int
+    by_status: dict[str, int]
+    total_suggestions: int
+    suggestions_by_status: dict[str, int]
+    suggestions_by_type: dict[str, int]
+    approval_rate: float

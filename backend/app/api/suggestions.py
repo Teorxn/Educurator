@@ -1,5 +1,10 @@
 """
-#19 — Endpoints approve/reject + versionado documentos
+Épica 4 — Gestión de Sugerencias
+HU-09: Consultar sugerencias generadas
+HU-11: Aprobar sugerencias
+HU-12: Rechazar sugerencias
+HU-14: Revisar FAQs (type=faq)
+HU-15: Proporcionar retroalimentación al agente
 """
 import uuid
 from datetime import datetime, timezone
@@ -14,6 +19,7 @@ from app.models.models import (
     Document,
     DocumentHistory,
     DocumentStatus,
+    FeedbackPattern,
     Suggestion,
     SuggestionStatus,
     User,
@@ -21,6 +27,7 @@ from app.models.models import (
 )
 from app.schemas.suggestions import (
     ApproveResponse,
+    FeedbackRequest,
     RejectRequest,
     RejectResponse,
     SuggestionsListResponse,
@@ -30,7 +37,7 @@ from app.schemas.suggestions import (
 router = APIRouter(prefix="/api/suggestions", tags=["suggestions"])
 
 
-# ── GET /api/suggestions ──────────────────────────────────────────────────────
+# ── GET /api/suggestions ─────────────────────────────────────────────────────
 
 
 @router.get("", response_model=SuggestionsListResponse)
@@ -55,12 +62,8 @@ async def list_suggestions(
             pass
 
     if type_filter:
-        try:
-            t = type_filter
-            query = query.where(Suggestion.type == t)
-            count_q = count_q.where(Suggestion.type == t)
-        except ValueError:
-            pass
+        query = query.where(Suggestion.type == type_filter)
+        count_q = count_q.where(Suggestion.type == type_filter)
 
     if document_id:
         query = query.where(Suggestion.document_id == document_id)
@@ -83,7 +86,7 @@ async def list_suggestions(
     return SuggestionsListResponse(items=result, total=total)
 
 
-# ── POST /api/suggestions/{id}/approve ────────────────────────────────────────
+# ── POST /api/suggestions/{id}/approve ───────────────────────────────────────
 
 
 @router.post("/{suggestion_id}/approve", response_model=ApproveResponse)
@@ -98,7 +101,6 @@ async def approve_suggestion(
 
     if not suggestion:
         raise HTTPException(status_code=404, detail="Suggestion not found")
-
     if suggestion.status != SuggestionStatus.pending:
         raise HTTPException(status_code=400, detail="Suggestion is not pending")
 
@@ -122,6 +124,14 @@ async def approve_suggestion(
         reason=None,
     )
     db.add(history)
+
+    feedback = FeedbackPattern(
+        suggestion_id=suggestion.id,
+        feedback_type="approve",
+        context=str({"type": suggestion.type.value, "confidence": suggestion.confidence_score}),
+    )
+    db.add(feedback)
+
     await db.commit()
     await db.refresh(suggestion)
 
@@ -132,7 +142,7 @@ async def approve_suggestion(
     )
 
 
-# ── POST /api/suggestions/{id}/reject ─────────────────────────────────────────
+# ── POST /api/suggestions/{id}/reject ────────────────────────────────────────
 
 
 @router.post("/{suggestion_id}/reject", response_model=RejectResponse)
@@ -143,9 +153,7 @@ async def reject_suggestion(
     current_user: User = Depends(require_role(UserRole.instructor, UserRole.admin)),
 ):
     if not body.reason or not body.reason.strip():
-        raise HTTPException(
-            status_code=400, detail="Reason is required for rejection"
-        )
+        raise HTTPException(status_code=400, detail="Reason is required for rejection")
 
     suggestion = (
         await db.execute(select(Suggestion).where(Suggestion.id == suggestion_id))
@@ -153,7 +161,6 @@ async def reject_suggestion(
 
     if not suggestion:
         raise HTTPException(status_code=404, detail="Suggestion not found")
-
     if suggestion.status != SuggestionStatus.pending:
         raise HTTPException(status_code=400, detail="Suggestion is not pending")
 
@@ -178,6 +185,15 @@ async def reject_suggestion(
         reason=body.reason.strip(),
     )
     db.add(history)
+
+    feedback = FeedbackPattern(
+        suggestion_id=suggestion.id,
+        feedback_type="reject",
+        comment=body.reason.strip(),
+        context=str({"type": suggestion.type.value, "confidence": suggestion.confidence_score}),
+    )
+    db.add(feedback)
+
     await db.commit()
     await db.refresh(suggestion)
 
@@ -186,3 +202,29 @@ async def reject_suggestion(
         status=suggestion.status,
         message="Sugerencia rechazada",
     )
+
+
+# ── POST /api/suggestions/{id}/feedback ──────────────────────────────────────
+
+
+@router.post("/{suggestion_id}/feedback", status_code=status.HTTP_204_NO_CONTENT)
+async def add_feedback(
+    suggestion_id: uuid.UUID,
+    body: FeedbackRequest,
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(get_current_user),
+):
+    suggestion = (
+        await db.execute(select(Suggestion).where(Suggestion.id == suggestion_id))
+    ).scalar_one_or_none()
+    if not suggestion:
+        raise HTTPException(status_code=404, detail="Suggestion not found")
+
+    feedback = FeedbackPattern(
+        suggestion_id=suggestion_id,
+        feedback_type=suggestion.status.value,
+        comment=body.comment,
+        context=str({"type": suggestion.type.value}),
+    )
+    db.add(feedback)
+    await db.commit()

@@ -10,6 +10,9 @@ from sqlalchemy.sql import func
 from app.database import Base
 
 
+# ── Enums ────────────────────────────────────────────────────────────────────
+
+
 class UserRole(str, enum.Enum):
     instructor = "instructor"
     admin = "admin"
@@ -27,12 +30,16 @@ class SuggestionType(str, enum.Enum):
     redundancy = "redundancy"
     conflict = "conflict"
     faq = "faq"
+    update = "update"
 
 
 class SuggestionStatus(str, enum.Enum):
     pending = "pending"
     approved = "approved"
     rejected = "rejected"
+
+
+# ── Models ───────────────────────────────────────────────────────────────────
 
 
 class User(Base):
@@ -52,6 +59,9 @@ class User(Base):
     )
 
     documents: Mapped[list["Document"]] = relationship("Document", back_populates="uploader")
+    reviewed_suggestions: Mapped[list["Suggestion"]] = relationship(
+        "Suggestion", back_populates="reviewer"
+    )
 
 
 class Document(Base):
@@ -82,12 +92,19 @@ class Document(Base):
     )
 
     uploader: Mapped["User | None"] = relationship("User", back_populates="documents")
-    suggestions: Mapped[list["Suggestion"]] = relationship("Suggestion", back_populates="document")
-    chunks: Mapped[list["DocumentChunk"]] = relationship("DocumentChunk", back_populates="document")
+    suggestions: Mapped[list["Suggestion"]] = relationship(
+        "Suggestion", back_populates="document"
+    )
+    chunks: Mapped[list["DocumentChunk"]] = relationship(
+        "DocumentChunk", back_populates="document"
+    )
+    history: Mapped[list["DocumentHistory"]] = relationship(
+        "DocumentHistory", back_populates="document", order_by="DocumentHistory.timestamp.desc()"
+    )
 
 
 class DocumentChunk(Base):
-    """#11 — Chunk individual de un documento procesado"""
+    """Chunk individual de un documento procesado por el pipeline RAG."""
     __tablename__ = "document_chunks"
 
     id: Mapped[uuid.UUID] = mapped_column(
@@ -110,7 +127,7 @@ class DocumentChunk(Base):
 
 
 class Suggestion(Base):
-    """#19 — Sugerencia generada por el agente"""
+    """Sugerencia generada por el agente sobre un documento."""
     __tablename__ = "suggestions"
 
     id: Mapped[uuid.UUID] = mapped_column(
@@ -123,7 +140,7 @@ class Suggestion(Base):
         SAEnum(SuggestionType), nullable=False
     )
     description: Mapped[str] = mapped_column(Text, nullable=False)
-    source_doc_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    source_doc_id: Mapped[str] = mapped_column(String(255), nullable=False, default="")
     source_chunk_ids: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
     confidence_score: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
     reasoning: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -142,10 +159,14 @@ class Suggestion(Base):
     )
 
     document: Mapped["Document"] = relationship("Document", back_populates="suggestions")
+    reviewer: Mapped["User | None"] = relationship("User", back_populates="reviewed_suggestions")
+    feedback: Mapped[list["FeedbackPattern"]] = relationship(
+        "FeedbackPattern", back_populates="suggestion"
+    )
 
 
 class DocumentHistory(Base):
-    """#20 — Audit trail: historial inmutable de cambios"""
+    """Audit trail inmutable: historial de cambios sobre documentos."""
     __tablename__ = "document_history"
 
     id: Mapped[uuid.UUID] = mapped_column(
@@ -155,12 +176,34 @@ class DocumentHistory(Base):
         UUID(as_uuid=True), ForeignKey("documents.id"), nullable=False, index=True
     )
     action: Mapped[str] = mapped_column(String(50), nullable=False)
-    performed_by: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("users.id"), nullable=False
+    performed_by: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id"), nullable=True
     )
     before_content: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     after_content: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     timestamp: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), index=True
+    )
+
+    document: Mapped["Document"] = relationship("Document", back_populates="history")
+
+
+class FeedbackPattern(Base):
+    """Retroalimentación del instructor para mejorar futuras sugerencias del agente."""
+    __tablename__ = "feedback_patterns"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    suggestion_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("suggestions.id"), nullable=False, index=True
+    )
+    feedback_type: Mapped[str] = mapped_column(String(20), nullable=False)  # "approve" | "reject"
+    comment: Mapped[str | None] = mapped_column(Text, nullable=True)
+    context: Mapped[str | None] = mapped_column(Text, nullable=True)  # JSON snapshot
+    created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
+
+    suggestion: Mapped["Suggestion"] = relationship("Suggestion", back_populates="feedback")

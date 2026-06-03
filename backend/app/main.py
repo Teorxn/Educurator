@@ -3,7 +3,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api import auth, docs, suggestions
+from app.api import auth, docs, suggestions, analytics
 from app.config import settings
 
 
@@ -32,6 +32,7 @@ app.add_middleware(
 app.include_router(auth.router)
 app.include_router(docs.router)
 app.include_router(suggestions.router)
+app.include_router(analytics.router)
 
 
 # ── Health check ────────────────────────────────────────────────────────────
