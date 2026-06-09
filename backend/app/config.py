@@ -1,10 +1,12 @@
-from pydantic_settings import BaseSettings
 from pydantic import field_validator
+from pydantic_settings import BaseSettings
 
 
 class Settings(BaseSettings):
     # Database
-    DATABASE_URL: str = "postgresql+asyncpg://postgres:postgres@localhost:5432/educurator"
+    DATABASE_URL: str = (
+        "postgresql+asyncpg://postgres:postgres@localhost:5432/educurator"
+    )
 
     # JWT
     SECRET_KEY: str = "change-this-secret-key-in-production"
@@ -18,6 +20,17 @@ class Settings(BaseSettings):
     # Upload
     UPLOAD_DIR: str = "data/uploads"
     MAX_FILE_SIZE: int = 52_428_800  # 50 MB
+
+    # LLM (opcional — si no se configura, el grafo funciona sin agente)
+    HUGGINGFACE_MODEL: str = ""  # Ej: "TinyLlama/TinyLlama-1.1B-Chat-v1.0"
+
+    # Redundancy detection
+    REDUNDANCY_THRESHOLD: float = (
+        0.90  # Cosine similarity threshold for redundancy detection
+    )
+
+    # LangGraph checkpoint persistence
+    AGENT_CHECKPOINT_DB_PATH: str = "data/checkpoints/curation_graph.sqlite"
 
     @field_validator("ALLOWED_ORIGINS", mode="before")
     @classmethod
