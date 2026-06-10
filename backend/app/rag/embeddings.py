@@ -2,11 +2,12 @@
 #11 — Embeddings con OpenAI + ChromaDB + cache por hash
 """
 import logging
-import hashlib
+import uuid
 from typing import Any
 
 import chromadb
 from chromadb.config import Settings as ChromaSettings
+from sqlalchemy.ext.asyncio import AsyncSession
 
 logger = logging.getLogger(__name__)
 
@@ -27,13 +28,17 @@ def _get_collection(client: chromadb.HttpClient | None = None):
     return c.get_or_create_collection(COLLECTION_NAME)
 
 
-def chunk_and_embed(
+async def chunk_and_embed(
     text: str,
     doc_id: str,
     chunk_index: int = 0,
     page_number: int | None = None,
+    db: AsyncSession | None = None,
+    document_uuid: uuid.UUID | None = None,
 ) -> list[dict[str, Any]]:
     from app.rag.chunker import chunk_text
+    from app.models.models import Document, DocumentChunk, DocumentStatus
+    from sqlalchemy import select
 
     chunks = chunk_text(text)
     client = _get_client()
@@ -42,6 +47,12 @@ def chunk_and_embed(
 
     openai_client = OpenAI()
     results: list[dict[str, Any]] = []
+
+    # Update document status to processing if db available
+    if db is not None and document_uuid is not None:
+        doc = (await db.execute(select(Document).where(Document.id == document_uuid))).scalar_one_or_none()
+        if doc:
+            doc.status = DocumentStatus.processing
 
     for i, chunk in enumerate(chunks):
         chunk_hash = chunk["hash"]
@@ -72,6 +83,19 @@ def chunk_and_embed(
             )
             logger.info("Stored new embedding for chunk %s", chroma_id)
 
+        # Persist chunk reference in Postgres
+        if db is not None and document_uuid is not None:
+            db_chunk = DocumentChunk(
+                document_id=document_uuid,
+                chunk_index=chunk_index + i,
+                content=chunk["text"],
+                token_count=chunk["token_count"],
+                chroma_id=chroma_id,
+                page_number=page_number or None,
+                hash=chunk_hash,
+            )
+            db.add(db_chunk)
+
         results.append({
             "chroma_id": chroma_id,
             "chunk_index": chunk_index + i,
@@ -80,5 +104,8 @@ def chunk_and_embed(
             "hash": chunk_hash,
             "page_number": page_number or 0,
         })
+
+    if db is not None:
+        await db.commit()
 
     return results
