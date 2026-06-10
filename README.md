@@ -12,7 +12,7 @@ Los docentes suben documentos (PDF, DOCX, TXT), el sistema los procesa con un pi
 | Backend | FastAPI + SQLAlchemy 2.0 (async) + Alembic |
 | Base de datos | PostgreSQL 16 |
 | Vector store | ChromaDB |
-| Embeddings | OpenAI `text-embedding-3-small` |
+| Embeddings | sentence-transformers (Hugging Face local) |
 | Agente (pendiente) | LangGraph |
 | Observabilidad | Langfuse |
 | Frontend | React 19 + Vite + Tailwind CSS 4 |
@@ -54,7 +54,7 @@ Educurator/
 - [Docker Desktop](https://www.docker.com/products/docker-desktop/) (recomendado)
 - Node.js 20+ (solo para correr el frontend en modo dev)
 - Python 3.12+ (solo para desarrollo local sin Docker)
-- Cuenta OpenAI con API key (para embeddings)
+- (Opcional) API key de OpenAI, Google Gemini, o modelo local de Hugging Face
 
 ---
 
@@ -68,14 +68,18 @@ cd Educurator/backend
 cp .env.example .env
 ```
 
-Editar `backend/.env` y completar:
+Editar `backend/.env` y completar (o usar el `.env` de la raíz):
 
 ```env
 DATABASE_URL=postgresql+asyncpg://postgres:postgres@db:5432/educurator
 SECRET_KEY=cambia-esto-por-un-secreto-largo
-OPENAI_API_KEY=sk-...          # necesario para embeddings
 ALLOWED_ORIGINS=["http://localhost:5173"]
 UPLOAD_DIR=data/uploads
+
+# LLM — elige SOLO una:
+# OPENAI_API_KEY=sk-...
+# GEMINI_API_KEY=tu-api-key-de-gemini
+# HUGGINGFACE_MODEL=TinyLlama/TinyLlama-1.1B-Chat-v1.0
 ```
 
 ### 2. Levantar el stack
@@ -290,8 +294,10 @@ ALLOWED_ORIGINS=["http://localhost:5173","http://localhost:3000"]
 UPLOAD_DIR=data/uploads
 MAX_FILE_SIZE=52428800        # 50 MB
 
-# OpenAI (requerido para embeddings)
-OPENAI_API_KEY=sk-...
+# LLM — elige SOLO una:
+# OPENAI_API_KEY=sk-...
+# GEMINI_API_KEY=tu-api-key-de-gemini
+# HUGGINGFACE_MODEL=TinyLlama/TinyLlama-1.1B-Chat-v1.0
 
 # Langfuse (Sprint 2)
 # LANGFUSE_PUBLIC_KEY=

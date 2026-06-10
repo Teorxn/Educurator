@@ -12,6 +12,8 @@ import chromadb
 import chromadb.api
 from chromadb.config import Settings as ChromaSettings
 
+from app.config import settings as app_settings
+
 logger = logging.getLogger(__name__)
 
 COLLECTION_NAME = "document_chunks"
@@ -42,8 +44,8 @@ def get_embedding_model():
 
 def _get_client() -> Any:
     return chromadb.HttpClient(
-        host="chromadb",
-        port=8000,
+        host=app_settings.CHROMADB_HOST,
+        port=app_settings.CHROMADB_PORT,
         settings=ChromaSettings(anonymized_telemetry=False),
     )
 

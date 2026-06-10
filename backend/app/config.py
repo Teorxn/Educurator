@@ -22,7 +22,12 @@ class Settings(BaseSettings):
     MAX_FILE_SIZE: int = 52_428_800  # 50 MB
 
     # LLM (opcional — si no se configura, el grafo funciona sin agente)
+    GEMINI_API_KEY: str = ""
     HUGGINGFACE_MODEL: str = ""  # Ej: "TinyLlama/TinyLlama-1.1B-Chat-v1.0"
+
+    # ChromaDB
+    CHROMADB_HOST: str = "localhost"
+    CHROMADB_PORT: int = 8001
 
     # Redundancy detection
     REDUNDANCY_THRESHOLD: float = (

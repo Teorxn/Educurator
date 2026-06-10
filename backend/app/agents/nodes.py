@@ -22,6 +22,7 @@ from pathlib import Path
 from langchain_core.messages import AIMessage, ToolMessage
 from sqlalchemy import select
 
+from app.agents.state import AgentState
 from app.config import settings
 from app.database import AsyncSessionLocal
 from app.models.models import (
@@ -42,7 +43,7 @@ logger = logging.getLogger(__name__)
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 
-def _format_doc_context(state: dict) -> str:
+def _format_doc_context(state: "AgentState") -> str:
     """Construye el contexto que recibe el agente con los docs y chunks disponibles."""
     n_docs = len(state.get("document_ids", []))
     n_chunks = len(state.get("chunks", []))
@@ -102,7 +103,7 @@ def _validate_suggestion_fields(args: dict) -> None:
 # ── Nodo 1: load_documents_node ──────────────────────────────────────────────
 
 
-async def load_documents_node(state: dict) -> dict:
+async def load_documents_node(state: "AgentState") -> dict:
     """Carga documentos con status needs_review desde Postgres.
 
     Marca los documentos como 'processing' para evitar
@@ -136,7 +137,7 @@ async def load_documents_node(state: dict) -> dict:
 # ── Nodo 2: chunk_and_embed_node ─────────────────────────────────────────────
 
 
-async def chunk_and_embed_node(state: dict) -> dict:
+async def chunk_and_embed_node(state: "AgentState") -> dict:
     """Parsea, chunkea y embebe cada documento pendiente.
 
     Para cada documento:
@@ -232,7 +233,7 @@ async def chunk_and_embed_node(state: dict) -> dict:
 # ── Nodo 3: redundancy_detection_node ────────────────────────────────────────
 
 
-async def redundancy_detection_node(state: dict) -> dict:
+async def redundancy_detection_node(state: "AgentState") -> dict:
     """Detecta redundancia semántica entre los chunks generados.
 
     Ejecuta detect_redundancy_bulk sobre todos los chunks del estado
@@ -298,7 +299,7 @@ async def redundancy_detection_node(state: dict) -> dict:
 # ── Nodo 5: generate_suggestions_node ────────────────────────────────────────
 
 
-async def generate_suggestions_node(state: dict) -> dict:
+async def generate_suggestions_node(state: "AgentState") -> dict:
     """Procesa las respuestas del agente y crea sugerencias en Postgres.
 
     También procesa los hallazgos de redundancia detectados automáticamente
@@ -463,7 +464,7 @@ async def generate_suggestions_node(state: dict) -> dict:
 # ── Nodo 5: wait_human_approval_node ─────────────────────────────────────────
 
 
-async def wait_human_approval_node(state: dict) -> dict:
+async def wait_human_approval_node(state: "AgentState") -> dict:
     """Punto de espera para revisión humana.
 
     Este nodo NO modifica ningún contenido oficial.

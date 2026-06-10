@@ -5,9 +5,11 @@ Ensambla todos los nodos en un grafo ejecutable end-to-end:
   load_documents → chunk_and_embed → redundancy_detection →
   react_agent (subgraph) → generate_suggestions → wait_human_approval → END
 
-Configuración del LLM:
-  - Por defecto usa Hugging Face local (vía transformers)
-  - Si se define OPENAI_API_KEY válida en .env, usa OpenAI
+Configuración del LLM (por orden de preferencia):
+  1. OpenAI        (si OPENAI_API_KEY válida en .env)
+  2. Google Gemini (si GEMINI_API_KEY válida en .env)
+  3. Hugging Face  (si HUGGINGFACE_MODEL configurado en .env)
+  4. Sin LLM       (solo pipeline RAG, sin agente)
 
 El ReAct agent se crea con create_react_agent de langgraph.prebuilt,
 que maneja automáticamente el loop de tool calling.
@@ -50,9 +52,10 @@ def _create_llm():
     """Crea el modelo de lenguaje según la configuración disponible.
 
     Orden de preferencia:
-      1. OpenAI (si OPENAI_API_KEY está configurada y no es placeholder)
-      2. Hugging Face local (si HUGGINGFACE_MODEL está configurado)
-      3. Mensaje de error claro si no hay nada configurado
+      1. OpenAI        (si OPENAI_API_KEY está configurada y no es placeholder)
+      2. Google Gemini  (si GEMINI_API_KEY está configurada)
+      3. Hugging Face  (si HUGGINGFACE_MODEL está configurado)
+      4. None          (modo solo pipeline RAG, sin agente)
     """
     openai_key = os.getenv("OPENAI_API_KEY", "")
     has_openai = bool(openai_key) and openai_key != "sk-..."
@@ -66,6 +69,22 @@ def _create_llm():
             temperature=0,
         )
 
+    gemini_key = getattr(settings, "GEMINI_API_KEY", None) or os.getenv(
+        "GEMINI_API_KEY", ""
+    )
+    if gemini_key:
+        try:
+            from langchain_google_genai import ChatGoogleGenerativeAI
+
+            logger.info("Usando Google Gemini: gemini-2.5-flash")
+            return ChatGoogleGenerativeAI(
+                model="gemini-2.5-flash",
+                temperature=0,
+                api_key=gemini_key,
+            )
+        except Exception as e:
+            logger.warning("Error configurando Gemini: %s", e)
+
     hf_model = getattr(settings, "HUGGINGFACE_MODEL", None) or os.getenv(
         "HUGGINGFACE_MODEL", ""
     )
@@ -74,7 +93,6 @@ def _create_llm():
             from langchain_huggingface import ChatHuggingFace, HuggingFacePipeline
 
             logger.info("Cargando modelo local Hugging Face: %s", hf_model)
-            # Usar pipeline local con device_map para optimizar memoria
             pipeline = HuggingFacePipeline.from_model_id(
                 model_id=hf_model,
                 task="text-generation",
@@ -88,12 +106,13 @@ def _create_llm():
             return ChatHuggingFace(llm=pipeline, verbose=False)
         except Exception as e:
             logger.warning("Error cargando modelo Hugging Face: %s", e)
-            logger.warning("El agente funcionará sin LLM (modo debug)")
 
     logger.warning(
         "⚠️  No hay LLM configurado. "
-        "Define OPENAI_API_KEY en .env o configura HUGGINGFACE_MODEL.\n"
-        "  Ejemplo: HUGGINGFACE_MODEL=TinyLlama/TinyLlama-1.1B-Chat-v1.0\n"
+        "Define OPENAI_API_KEY, GEMINI_API_KEY o HUGGINGFACE_MODEL en .env.\n"
+        "  Ejemplos:\n"
+        "    GEMINI_API_KEY=tu-api-key\n"
+        "    HUGGINGFACE_MODEL=TinyLlama/TinyLlama-1.1B-Chat-v1.0\n"
         "  El grafo se usará sin agente (solo pipeline RAG)."
     )
     return None

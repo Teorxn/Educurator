@@ -39,7 +39,7 @@ services:
     restart: unless-stopped
 
   langfuse:
-    image: langfuse/langfuse:latest
+    image: langfuse/langfuse:2
     ports:
       - "3000:3000"
     environment:

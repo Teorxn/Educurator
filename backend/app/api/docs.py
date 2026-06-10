@@ -24,8 +24,8 @@ ALLOWED_MIMES: dict[str, str] = {
 
 
 def _sanitize_filename(name: str) -> str:
-    name = Path(name).name                     # strip any path components
-    name = re.sub(r"[^\w\s.\-]", "", name)    # keep only safe chars
+    name = Path(name).name  # strip any path components
+    name = re.sub(r"[^\w\s.\-]", "", name)  # keep only safe chars
     name = name.strip() or "document"
     return name
 
@@ -53,9 +53,14 @@ async def list_docs(
             pass
 
     total = (await db.execute(count_q)).scalar_one()
-    docs = (await db.execute(query.offset((page - 1) * limit).limit(limit))).scalars().all()
+    docs = (
+        (await db.execute(query.offset((page - 1) * limit).limit(limit)))
+        .scalars()
+        .all()
+    )
 
-    return DocsListResponse(items=list(docs), total=total)
+    items = [DocumentResponse.model_validate(d) for d in docs]
+    return DocsListResponse(items=items, total=total)
 
 
 # ── GET /api/docs/{id} ──────────────────────────────────────────────────────
@@ -67,7 +72,9 @@ async def get_doc(
     db: AsyncSession = Depends(get_db),
     _: User = Depends(get_current_user),
 ):
-    doc = (await db.execute(select(Document).where(Document.id == doc_id))).scalar_one_or_none()
+    doc = (
+        await db.execute(select(Document).where(Document.id == doc_id))
+    ).scalar_one_or_none()
     if not doc:
         raise HTTPException(status_code=404, detail="Document not found")
     return doc
@@ -83,7 +90,9 @@ async def patch_doc(
     db: AsyncSession = Depends(get_db),
     _: User = Depends(get_current_user),
 ):
-    doc = (await db.execute(select(Document).where(Document.id == doc_id))).scalar_one_or_none()
+    doc = (
+        await db.execute(select(Document).where(Document.id == doc_id))
+    ).scalar_one_or_none()
     if not doc:
         raise HTTPException(status_code=404, detail="Document not found")
 
@@ -98,7 +107,9 @@ async def patch_doc(
 # ── POST /api/docs/upload ───────────────────────────────────────────────────
 
 
-@router.post("/upload", response_model=DocumentResponse, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/upload", response_model=DocumentResponse, status_code=status.HTTP_201_CREATED
+)
 async def upload_doc(
     file: UploadFile = File(...),
     db: AsyncSession = Depends(get_db),
