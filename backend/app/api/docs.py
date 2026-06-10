@@ -11,7 +11,12 @@ from app.api.dependencies import get_current_user
 from app.config import settings
 from app.database import get_db
 from app.models.models import Document, DocumentStatus, User
-from app.schemas.docs import DocsListResponse, DocumentResponse, PatchDocumentRequest
+from app.schemas.docs import (
+    CreateDocumentRequest,
+    DocsListResponse,
+    DocumentResponse,
+    PatchDocumentRequest,
+)
 
 router = APIRouter(prefix="/api/docs", tags=["documents"])
 
@@ -28,6 +33,30 @@ def _sanitize_filename(name: str) -> str:
     name = re.sub(r"[^\w\s.\-]", "", name)    # keep only safe chars
     name = name.strip() or "document"
     return name
+
+
+# ── POST /api/docs ──────────────────────────────────────────────────────────
+
+
+@router.post("", response_model=DocumentResponse, status_code=status.HTTP_201_CREATED)
+async def create_doc(
+    body: CreateDocumentRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    doc = Document(
+        filename=body.filename,
+        original_filename=body.filename,
+        file_type=body.file_type,
+        file_path="",
+        size_bytes=0,
+        status=DocumentStatus.needs_review,
+        uploaded_by=current_user.id,
+    )
+    db.add(doc)
+    await db.commit()
+    await db.refresh(doc)
+    return doc
 
 
 # ── GET /api/docs ───────────────────────────────────────────────────────────

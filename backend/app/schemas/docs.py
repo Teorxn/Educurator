@@ -22,5 +22,10 @@ class DocsListResponse(BaseModel):
     total: int
 
 
+class CreateDocumentRequest(BaseModel):
+    filename: str
+    file_type: str = "pdf"
+
+
 class PatchDocumentRequest(BaseModel):
     status: DocumentStatus | None = None

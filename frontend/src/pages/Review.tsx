@@ -33,10 +33,18 @@ function fmtConfidence(score: number) {
   return `${(score * 100).toFixed(0)}%`
 }
 
+const TYPE_OPTIONS = [
+  { value: '', label: 'Todos los tipos' },
+  { value: 'redundancy', label: 'Redundancia' },
+  { value: 'conflict', label: 'Conflicto' },
+  { value: 'faq', label: 'FAQ' },
+]
+
 export default function Review() {
   const [suggestions, setSuggestions] = useState<Suggestion[]>([])
   const [loading, setLoading] = useState(true)
   const [filter, setFilter] = useState<string>('pending')
+  const [typeFilter, setTypeFilter] = useState<string>('')
   const [rejectModal, setRejectModal] = useState<{ id: string; open: boolean }>({ id: '', open: false })
   const [rejectReason, setRejectReason] = useState('')
   const [rejecting, setRejecting] = useState(false)
@@ -46,6 +54,7 @@ export default function Review() {
     try {
       const params: Record<string, string> = {}
       if (filter !== 'all') params.status = filter
+      if (typeFilter) params.type = typeFilter
       const { data } = await getSuggestions(params)
       setSuggestions(data.items)
     } catch {
@@ -53,7 +62,7 @@ export default function Review() {
     } finally {
       if (isFirst) setLoading(false)
     }
-  }, [filter])
+  }, [filter, typeFilter])
 
   useEffect(() => {
     fetchSuggestions(true)
@@ -111,7 +120,7 @@ export default function Review() {
     <div className="space-y-4">
       {/* Filters */}
       <div className="flex items-center justify-between flex-wrap gap-3">
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
           {['pending', 'approved', 'rejected', 'all'].map((f) => (
             <button
               key={f}
@@ -125,6 +134,16 @@ export default function Review() {
               {f === 'pending' ? 'Pendientes' : f === 'approved' ? 'Aprobadas' : f === 'rejected' ? 'Rechazadas' : 'Todas'}
             </button>
           ))}
+          <span className="w-px h-5 bg-gray-200 mx-1" />
+          <select
+            value={typeFilter}
+            onChange={(e) => setTypeFilter(e.target.value)}
+            className="text-xs px-2 py-1.5 rounded-full border border-gray-200 bg-white text-gray-600 focus:outline-none focus:ring-2 focus:ring-violet-400 focus:border-transparent"
+          >
+            {TYPE_OPTIONS.map((o) => (
+              <option key={o.value} value={o.value}>{o.label}</option>
+            ))}
+          </select>
         </div>
         <p className="text-sm text-gray-500">
           {suggestions.length} sugerencia{suggestions.length !== 1 ? 's' : ''}
