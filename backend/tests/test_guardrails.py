@@ -1,5 +1,5 @@
 """
-#18 — Tests: Guardrails con JSON schema estricto en tools del agente.
+#18 — Tests: Guardrails con modelos Pydantic en tools del agente.
 
 Valida que:
   1. Cada schema acepta outputs correctos (success y error)
@@ -34,14 +34,13 @@ class TestSchemasRegistered:
             "detect_redundancy",
         }
 
-    def test_each_schema_has_title(self):
-        for name, schema in TOOL_OUTPUT_SCHEMAS.items():
-            assert "title" in schema, f"{name} schema lacks title"
-
-    def test_each_schema_has_oneOf(self):
-        for name, schema in TOOL_OUTPUT_SCHEMAS.items():
-            assert "oneOf" in schema, f"{name} schema lacks oneOf"
-            assert len(schema["oneOf"]) >= 2, f"{name} should have at least 2 variants"
+    def test_each_schema_is_valid_pydantic_type(self):
+        """Cada esquema debe ser un TypeAdapter válido."""
+        for name, adapter in TOOL_OUTPUT_SCHEMAS.items():
+            # Verificar que se puede invocar validate_python
+            assert hasattr(adapter, "validate_python"), (
+                f"{name} no es un TypeAdapter válido"
+            )
 
 
 class TestSearchDocuments:
@@ -453,7 +452,7 @@ class TestSuggestionRequiredFields:
         }
         with pytest.raises(SuggestionDataValidationError) as exc:
             validate_suggestion_data(args)
-        assert "fuera de rango" in str(exc.value)
+        assert "confidence_score" in str(exc.value)
 
     def test_confidence_score_out_of_range_low(self):
         args = {
@@ -463,7 +462,7 @@ class TestSuggestionRequiredFields:
         }
         with pytest.raises(SuggestionDataValidationError) as exc:
             validate_suggestion_data(args)
-        assert "fuera de rango" in str(exc.value)
+        assert "confidence_score" in str(exc.value)
 
     def test_confidence_score_wrong_type(self):
         args = {
@@ -550,67 +549,3 @@ class TestValidateRedundancyFinding:
         with pytest.raises(SuggestionDataValidationError) as exc:
             validate_redundancy_finding(finding)
         assert "similarity" in str(exc.value)
-
-
-class TestMakeSchemaStrict:
-    """Verifica que _make_schema_strict cierre correctamente los schemas."""
-
-    def test_additional_properties_added_to_objects(self):
-        """Los objetos deben tener additionalProperties=False después de strict."""
-        from app.tools.guardrails import _make_schema_strict
-
-        schema = {
-            "type": "object",
-            "properties": {
-                "name": {"type": "string"},
-            },
-        }
-        result = _make_schema_strict(schema)
-        assert result["additionalProperties"] is False
-
-    def test_nested_objects_in_items_are_closed(self):
-        """Los objetos dentro de items de arrays deben cerrarse."""
-        from app.tools.guardrails import _make_schema_strict
-
-        schema = {
-            "type": "object",
-            "properties": {
-                "items_list": {
-                    "type": "array",
-                    "items": {
-                        "type": "object",
-                        "properties": {
-                            "id": {"type": "string"},
-                            "nested": {
-                                "type": "object",
-                                "properties": {"value": {"type": "string"}},
-                            },
-                        },
-                    },
-                },
-            },
-        }
-        result = _make_schema_strict(schema)
-        items_schema = result["properties"]["items_list"]["items"]
-        assert items_schema["additionalProperties"] is False
-        assert items_schema["properties"]["nested"]["additionalProperties"] is False
-
-    def test_one_of_subschemas_are_closed(self):
-        """Los subschemas dentro de oneOf deben cerrarse."""
-        from app.tools.guardrails import _make_schema_strict
-
-        schema = {
-            "oneOf": [
-                {
-                    "type": "object",
-                    "properties": {"status": {"type": "string", "enum": ["ok"]}},
-                },
-                {
-                    "type": "object",
-                    "properties": {"status": {"type": "string", "enum": ["error"]}},
-                },
-            ],
-        }
-        result = _make_schema_strict(schema)
-        for subschema in result["oneOf"]:
-            assert subschema["additionalProperties"] is False

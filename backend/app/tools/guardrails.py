@@ -1,17 +1,19 @@
 """
-#18 — Guardrails: JSON schema estricto en tools del agente.
+#18 — Guardrails: Validación Pydantic de outputs en tools del agente.
 
-Define los schemas de output para cada tool y provee validación
+Define modelos Pydantic para cada tool y provee validación
 antes de retornar resultados al grafo LangGraph.
 
-Schemas en formato JSON Schema (draft-07) para usar con jsonschema.
+Reemplaza la implementación anterior basada en JSON Schema/jsonschema
+por modelos Pydantic con validación estricta (extra="forbid"),
+aprovechando el sistema de tipos y validación que LangGraph ya utiliza.
 """
 
 import logging
-from typing import Any, Dict
+from typing import Annotated, Any, Dict, List, Literal, Optional, Union
 
-from jsonschema import ValidationError
-from jsonschema import validate as jsonschema_validate
+from pydantic import BaseModel, ConfigDict, Field, TypeAdapter
+from pydantic import ValidationError as PydanticValidationError
 
 logger = logging.getLogger(__name__)
 
@@ -38,432 +40,306 @@ __all__ = [
 ]
 
 
-# ── JSON Schemas para cada tool ──────────────────────────────────────────────
+# ═══════════════════════════════════════════════════════════════════════
+# Modelos Pydantic para outputs de tools
+# ═══════════════════════════════════════════════════════════════════════
+# Cada tool define modelos Success y Error, combinados en una Union
+# discriminada por el campo "status". Todos con extra="forbid" para
+# no aceptar campos no declarados (equivalent to _make_schema_strict).
+# ═══════════════════════════════════════════════════════════════════════
 
-# Tool 1: search_documents
-_search_documents_success = {
-    "type": "object",
-    "properties": {
-        "status": {"type": "string", "enum": ["success"]},
-        "query": {"type": "string"},
-        "results": {
-            "type": "array",
-            "items": {
-                "type": "object",
-                "properties": {
-                    "chunk_id": {"type": "string"},
-                    "content": {"type": "string"},
-                    "similarity": {"type": "number"},
-                    "metadata": {
-                        "type": "object",
-                        "properties": {
-                            "doc_id": {"type": "string"},
-                            "chunk_index": {"type": "integer"},
-                            "token_count": {"type": "integer"},
-                        },
-                        "required": ["doc_id", "chunk_index", "token_count"],
-                    },
-                },
-                "required": ["chunk_id", "content", "similarity", "metadata"],
-            },
-        },
-        "total": {"type": "integer"},
-    },
-    "required": ["status", "query", "results", "total"],
+
+# ── Tool 1: search_documents ─────────────────────────────────────────
+
+
+class _SearchResultMetadata(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    doc_id: str
+    chunk_index: int
+    token_count: int
+
+
+class _SearchResult(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    chunk_id: str
+    content: str
+    similarity: float
+    metadata: _SearchResultMetadata
+
+
+class SearchDocumentsSuccess(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    status: Literal["success"]
+    query: str
+    results: List[_SearchResult]
+    total: int
+
+
+class SearchDocumentsError(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    status: Literal["error"]
+    error: str
+    results: List = Field(default_factory=list)
+
+
+# ── Tool 2: compare_content ──────────────────────────────────────────
+
+
+class _ChunkInfo(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    id: str
+    preview: str
+    doc_id: str
+    chunk_index: int
+
+
+class _Differences(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    only_in_a: List[str]
+    only_in_b: List[str]
+    total_tokens_a: int
+    total_tokens_b: int
+
+
+class CompareContentSuccess(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    status: Literal["success"]
+    chunk_a: _ChunkInfo
+    chunk_b: _ChunkInfo
+    similarity: float
+    differences: _Differences
+
+
+class CompareContentError(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    status: Literal["error"]
+    error: str
+
+
+# ── Tool 3: detect_conflict ──────────────────────────────────────────
+
+
+class _ConflictItem(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    chunk_a_id: str
+    chunk_b_id: str
+    similarity: float
+    content_a_preview: str
+    content_b_preview: str
+    index_a: int
+
+
+class DetectConflictSuccess(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    status: Literal["success"]
+    doc_a: str
+    doc_b: str
+    total_chunks_a: int
+    total_chunks_b: int
+    comparisons: int
+    conflicts: List[_ConflictItem]
+    conflict_count: int
+
+
+class DetectConflictError(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    status: Literal["error"]
+    error: str
+
+
+# ── Tool 4: suggest_update ───────────────────────────────────────────
+
+
+class SuggestUpdateSuccess(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    status: Literal["success"]
+    suggestion_id: str
+    document_id: str
+    type: str
+    state: Literal["pending"]
+    source_doc_id: str = Field(min_length=1)
+    source_chunk_ids: List[str] = Field(min_length=1)
+    confidence_score: float = Field(ge=0.0, le=1.0)
+    message: str
+
+
+class SuggestUpdateError(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    status: Literal["error"]
+    error: str
+
+
+# ── Tool 5: generate_faq_entry ───────────────────────────────────────
+
+
+class _FaqContent(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    question: str
+    answer: str
+    source_chunk_id: str
+    topic: str
+
+
+class GenerateFaqSuccess(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    status: Literal["success"]
+    faq: _FaqContent
+
+
+class GenerateFaqError(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    status: Literal["error"]
+    error: str
+
+
+# ── Tool 6: log_action ───────────────────────────────────────────────
+
+
+class _LogContext(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    action: str
+    detail: str
+    agent_step: str
+    source: Literal["agent_tool"]
+
+
+class LogActionSuccess(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    status: Literal["logged"]
+    audit_log_id: str
+    document_id: Optional[str] = None
+    action: str
+    detail: str
+    agent_step: str
+    timestamp: str
+    context: _LogContext
+    message: str
+
+
+class LogActionError(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    status: Literal["error"]
+    action: str
+    detail: str
+    agent_step: str
+    error: str
+
+
+# ── Tool 7: detect_redundancy ────────────────────────────────────────
+
+
+class _RedundantPair(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    chunk_id_a: str
+    chunk_id_b: str
+    similarity: float
+    confidence_score: float
+    doc_id_a: str
+    doc_id_b: str
+    content_a_preview: str
+    content_b_preview: str
+
+
+class DetectRedundancySuccess(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    status: Literal["success"]
+    query_chunk_id: str
+    threshold: float
+    total_comparisons: int
+    redundant_pairs: List[_RedundantPair]
+    pair_count: int
+
+
+class DetectRedundancyError(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    status: Literal["error"]
+    error: str
+    redundant_pairs: List = Field(default_factory=list)
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Registry
+# ═══════════════════════════════════════════════════════════════════════
+
+# Usamos Annotated[Union[...], Field(discriminator="status")] para que
+# Pydantic seleccione automáticamente el modelo Success/Error según
+# el valor del campo "status" (discriminador nativo de Pydantic v2).
+
+TOOL_OUTPUT_SCHEMAS: Dict[str, TypeAdapter] = {
+    "search_documents": TypeAdapter(
+        Annotated[
+            Union[SearchDocumentsSuccess, SearchDocumentsError],
+            Field(discriminator="status"),
+        ]
+    ),
+    "compare_content": TypeAdapter(
+        Annotated[
+            Union[CompareContentSuccess, CompareContentError],
+            Field(discriminator="status"),
+        ]
+    ),
+    "detect_conflict": TypeAdapter(
+        Annotated[
+            Union[DetectConflictSuccess, DetectConflictError],
+            Field(discriminator="status"),
+        ]
+    ),
+    "suggest_update": TypeAdapter(
+        Annotated[
+            Union[SuggestUpdateSuccess, SuggestUpdateError],
+            Field(discriminator="status"),
+        ]
+    ),
+    "generate_faq_entry": TypeAdapter(
+        Annotated[
+            Union[GenerateFaqSuccess, GenerateFaqError],
+            Field(discriminator="status"),
+        ]
+    ),
+    "log_action": TypeAdapter(
+        Annotated[
+            Union[LogActionSuccess, LogActionError],
+            Field(discriminator="status"),
+        ]
+    ),
+    "detect_redundancy": TypeAdapter(
+        Annotated[
+            Union[DetectRedundancySuccess, DetectRedundancyError],
+            Field(discriminator="status"),
+        ]
+    ),
 }
 
-_search_documents_error = {
-    "type": "object",
-    "properties": {
-        "status": {"type": "string", "enum": ["error"]},
-        "error": {"type": "string"},
-        "results": {"type": "array"},
-    },
-    "required": ["status", "error"],
-}
 
-SCHEMA_SEARCH_DOCUMENTS = {
-    "$schema": "http://json-schema.org/draft-07/schema#",
-    "title": "SearchDocumentsOutput",
-    "description": "Output schema for search_documents tool",
-    "oneOf": [_search_documents_success, _search_documents_error],
-}
-
-# Tool 2: compare_content
-_compare_content_success = {
-    "type": "object",
-    "properties": {
-        "status": {"type": "string", "enum": ["success"]},
-        "chunk_a": {
-            "type": "object",
-            "properties": {
-                "id": {"type": "string"},
-                "preview": {"type": "string"},
-                "doc_id": {"type": "string"},
-                "chunk_index": {"type": "integer"},
-            },
-            "required": ["id", "preview", "doc_id", "chunk_index"],
-        },
-        "chunk_b": {
-            "type": "object",
-            "properties": {
-                "id": {"type": "string"},
-                "preview": {"type": "string"},
-                "doc_id": {"type": "string"},
-                "chunk_index": {"type": "integer"},
-            },
-            "required": ["id", "preview", "doc_id", "chunk_index"],
-        },
-        "similarity": {"type": "number"},
-        "differences": {
-            "type": "object",
-            "properties": {
-                "only_in_a": {"type": "array", "items": {"type": "string"}},
-                "only_in_b": {"type": "array", "items": {"type": "string"}},
-                "total_tokens_a": {"type": "integer"},
-                "total_tokens_b": {"type": "integer"},
-            },
-            "required": ["only_in_a", "only_in_b", "total_tokens_a", "total_tokens_b"],
-        },
-    },
-    "required": ["status", "chunk_a", "chunk_b", "similarity", "differences"],
-}
-
-_compare_content_error = {
-    "type": "object",
-    "properties": {
-        "status": {"type": "string", "enum": ["error"]},
-        "error": {"type": "string"},
-    },
-    "required": ["status", "error"],
-}
-
-SCHEMA_COMPARE_CONTENT = {
-    "$schema": "http://json-schema.org/draft-07/schema#",
-    "title": "CompareContentOutput",
-    "description": "Output schema for compare_content tool",
-    "oneOf": [_compare_content_success, _compare_content_error],
-}
-
-# Tool 3: detect_conflict
-_detect_conflict_success = {
-    "type": "object",
-    "properties": {
-        "status": {"type": "string", "enum": ["success"]},
-        "doc_a": {"type": "string"},
-        "doc_b": {"type": "string"},
-        "total_chunks_a": {"type": "integer"},
-        "total_chunks_b": {"type": "integer"},
-        "comparisons": {"type": "integer"},
-        "conflicts": {
-            "type": "array",
-            "items": {
-                "type": "object",
-                "properties": {
-                    "chunk_a_id": {"type": "string"},
-                    "chunk_b_id": {"type": "string"},
-                    "similarity": {"type": "number"},
-                    "content_a_preview": {"type": "string"},
-                    "content_b_preview": {"type": "string"},
-                    "index_a": {"type": "integer"},
-                },
-                "required": [
-                    "chunk_a_id",
-                    "chunk_b_id",
-                    "similarity",
-                    "content_a_preview",
-                    "content_b_preview",
-                    "index_a",
-                ],
-            },
-        },
-        "conflict_count": {"type": "integer"},
-    },
-    "required": [
-        "status",
-        "doc_a",
-        "doc_b",
-        "total_chunks_a",
-        "total_chunks_b",
-        "comparisons",
-        "conflicts",
-        "conflict_count",
-    ],
-}
-
-_detect_conflict_error = {
-    "type": "object",
-    "properties": {
-        "status": {"type": "string", "enum": ["error"]},
-        "error": {"type": "string"},
-    },
-    "required": ["status", "error"],
-}
-
-SCHEMA_DETECT_CONFLICT = {
-    "$schema": "http://json-schema.org/draft-07/schema#",
-    "title": "DetectConflictOutput",
-    "description": "Output schema for detect_conflict tool",
-    "oneOf": [_detect_conflict_success, _detect_conflict_error],
-}
-
-# Tool 4: suggest_update
-_suggest_update_success = {
-    "type": "object",
-    "properties": {
-        "status": {"type": "string", "enum": ["success"]},
-        "suggestion_id": {"type": "string"},
-        "document_id": {"type": "string"},
-        "type": {"type": "string"},
-        "state": {"type": "string", "enum": ["pending"]},
-        "source_doc_id": {"type": "string", "minLength": 1},
-        "source_chunk_ids": {
-            "type": "array",
-            "items": {"type": "string"},
-            "minItems": 1,
-        },
-        "confidence_score": {"type": "number", "minimum": 0.0, "maximum": 1.0},
-        "message": {"type": "string"},
-    },
-    "required": [
-        "status",
-        "suggestion_id",
-        "document_id",
-        "type",
-        "state",
-        "source_doc_id",
-        "source_chunk_ids",
-        "confidence_score",
-        "message",
-    ],
-}
-
-_suggest_update_error = {
-    "type": "object",
-    "properties": {
-        "status": {"type": "string", "enum": ["error"]},
-        "error": {"type": "string"},
-    },
-    "required": ["status", "error"],
-}
-
-SCHEMA_SUGGEST_UPDATE = {
-    "$schema": "http://json-schema.org/draft-07/schema#",
-    "title": "SuggestUpdateOutput",
-    "description": "Output schema for suggest_update tool",
-    "oneOf": [_suggest_update_success, _suggest_update_error],
-}
-
-# Tool 5: generate_faq_entry
-_generate_faq_success = {
-    "type": "object",
-    "properties": {
-        "status": {"type": "string", "enum": ["success"]},
-        "faq": {
-            "type": "object",
-            "properties": {
-                "question": {"type": "string"},
-                "answer": {"type": "string"},
-                "source_chunk_id": {"type": "string"},
-                "topic": {"type": "string"},
-            },
-            "required": ["question", "answer", "source_chunk_id", "topic"],
-        },
-    },
-    "required": ["status", "faq"],
-}
-
-_generate_faq_error = {
-    "type": "object",
-    "properties": {
-        "status": {"type": "string", "enum": ["error"]},
-        "error": {"type": "string"},
-    },
-    "required": ["status", "error"],
-}
-
-SCHEMA_GENERATE_FAQ = {
-    "$schema": "http://json-schema.org/draft-07/schema#",
-    "title": "GenerateFaqEntryOutput",
-    "description": "Output schema for generate_faq_entry tool",
-    "oneOf": [_generate_faq_success, _generate_faq_error],
-}
-
-# Tool 6: log_action
-_log_action_logged = {
-    "type": "object",
-    "properties": {
-        "status": {"type": "string", "enum": ["logged"]},
-        "audit_log_id": {"type": "string"},
-        "document_id": {"type": ["string", "null"]},
-        "action": {"type": "string"},
-        "detail": {"type": "string"},
-        "agent_step": {"type": "string"},
-        "timestamp": {"type": "string"},
-        "context": {
-            "type": "object",
-            "properties": {
-                "action": {"type": "string"},
-                "detail": {"type": "string"},
-                "agent_step": {"type": "string"},
-                "source": {"type": "string", "enum": ["agent_tool"]},
-            },
-            "required": ["action", "detail", "agent_step", "source"],
-        },
-        "message": {"type": "string"},
-    },
-    "required": [
-        "status",
-        "audit_log_id",
-        "document_id",
-        "action",
-        "detail",
-        "agent_step",
-        "timestamp",
-        "context",
-        "message",
-    ],
-}
-
-_log_action_error = {
-    "type": "object",
-    "properties": {
-        "status": {"type": "string", "enum": ["error"]},
-        "action": {"type": "string"},
-        "detail": {"type": "string"},
-        "agent_step": {"type": "string"},
-        "error": {"type": "string"},
-    },
-    "required": ["status", "error"],
-}
-
-SCHEMA_LOG_ACTION = {
-    "$schema": "http://json-schema.org/draft-07/schema#",
-    "title": "LogActionOutput",
-    "description": "Output schema for log_action tool",
-    "oneOf": [_log_action_logged, _log_action_error],
-}
-
-# Tool 7: detect_redundancy
-_detect_redundancy_success = {
-    "type": "object",
-    "properties": {
-        "status": {"type": "string", "enum": ["success"]},
-        "query_chunk_id": {"type": "string"},
-        "threshold": {"type": "number"},
-        "total_comparisons": {"type": "integer"},
-        "redundant_pairs": {
-            "type": "array",
-            "items": {
-                "type": "object",
-                "properties": {
-                    "chunk_id_a": {"type": "string"},
-                    "chunk_id_b": {"type": "string"},
-                    "similarity": {"type": "number"},
-                    "confidence_score": {"type": "number"},
-                    "doc_id_a": {"type": "string"},
-                    "doc_id_b": {"type": "string"},
-                    "content_a_preview": {"type": "string"},
-                    "content_b_preview": {"type": "string"},
-                },
-                "required": [
-                    "chunk_id_a",
-                    "chunk_id_b",
-                    "similarity",
-                    "confidence_score",
-                    "doc_id_a",
-                    "doc_id_b",
-                    "content_a_preview",
-                    "content_b_preview",
-                ],
-            },
-        },
-        "pair_count": {"type": "integer"},
-    },
-    "required": [
-        "status",
-        "query_chunk_id",
-        "threshold",
-        "total_comparisons",
-        "redundant_pairs",
-        "pair_count",
-    ],
-}
-
-_detect_redundancy_error = {
-    "type": "object",
-    "properties": {
-        "status": {"type": "string", "enum": ["error"]},
-        "error": {"type": "string"},
-        "redundant_pairs": {"type": "array"},
-    },
-    "required": ["status", "error"],
-}
-
-SCHEMA_DETECT_REDUNDANCY = {
-    "$schema": "http://json-schema.org/draft-07/schema#",
-    "title": "DetectRedundancyOutput",
-    "description": "Output schema for detect_redundancy tool",
-    "oneOf": [_detect_redundancy_success, _detect_redundancy_error],
-}
-
-# ── Registry ──────────────────────────────────────────────────────────────────
-
-
-def _make_schema_strict(schema: Dict[str, Any]) -> Dict[str, Any]:
-    """Marca recursivamente los objetos JSON Schema como cerrados.
-
-    Esto evita que una tool retorne campos no declarados y mantiene la validación
-    en modo estricto para outputs success y error.
-
-    Recorre:
-      - Objetos (type=object) → additionalProperties=False
-      - Propiedades anidadas
-      - items (arrays)
-      - oneOf / anyOf / allOf / not
-      - if / then / else
-    """
-    if not isinstance(schema, dict):
-        return schema
-
-    if schema.get("type") == "object":
-        schema.setdefault("additionalProperties", False)
-        for subschema in schema.get("properties", {}).values():
-            if isinstance(subschema, dict):
-                _make_schema_strict(subschema)
-    for key in ("items", "additionalProperties", "if", "then", "else", "not"):
-        subschema = schema.get(key)
-        if isinstance(subschema, dict):
-            _make_schema_strict(subschema)
-    for key in ("oneOf", "anyOf", "allOf"):
-        for subschema in schema.get(key, []):
-            if isinstance(subschema, dict):
-                _make_schema_strict(subschema)
-    # prefixItems (draft 2020-12, usado por algunos generadores)
-    for subschema in schema.get("prefixItems", []):
-        if isinstance(subschema, dict):
-            _make_schema_strict(subschema)
-    return schema
-
-
-TOOL_OUTPUT_SCHEMAS: Dict[str, Dict[str, Any]] = {
-    "search_documents": SCHEMA_SEARCH_DOCUMENTS,
-    "compare_content": SCHEMA_COMPARE_CONTENT,
-    "detect_conflict": SCHEMA_DETECT_CONFLICT,
-    "suggest_update": SCHEMA_SUGGEST_UPDATE,
-    "generate_faq_entry": SCHEMA_GENERATE_FAQ,
-    "log_action": SCHEMA_LOG_ACTION,
-    "detect_redundancy": SCHEMA_DETECT_REDUNDANCY,
-}
-
-for _schema in TOOL_OUTPUT_SCHEMAS.values():
-    _make_schema_strict(_schema)
-
-# ── Validación ────────────────────────────────────────────────────────────────
+# ═══════════════════════════════════════════════════════════════════════
+# Validación de outputs de tools
+# ═══════════════════════════════════════════════════════════════════════
 
 
 def validate_tool_output(tool_name: str, output: dict) -> dict:
-    """Valida el output de una tool contra su schema JSON.
+    """Valida el output de una tool contra su modelo Pydantic.
 
     Args:
         tool_name: Nombre de la tool (clave en TOOL_OUTPUT_SCHEMAS).
@@ -482,43 +358,52 @@ def validate_tool_output(tool_name: str, output: dict) -> dict:
             f"Disponibles: {list(TOOL_OUTPUT_SCHEMAS.keys())}"
         )
 
-    schema = TOOL_OUTPUT_SCHEMAS[tool_name]
+    adapter = TOOL_OUTPUT_SCHEMAS[tool_name]
 
     try:
-        jsonschema_validate(output, schema)
-    except ValidationError as e:
-        path = (
-            " → ".join(str(p) for p in e.absolute_path) if e.absolute_path else "root"
-        )
+        adapter.validate_python(output)
+    except PydanticValidationError as e:
+        first_error = e.errors()[0] if e.errors() else {}
+        loc = " → ".join(str(p) for p in first_error.get("loc", ["root"]))
+        msg = first_error.get("msg", str(e))
         logger.error(
             "❌ Validación fallida para tool '%s' en [%s]: %s\nOutput: %s",
             tool_name,
-            path,
-            e.message,
+            loc,
+            msg,
             output,
         )
         raise ToolOutputValidationError(
-            f"Output de '{tool_name}' no pasa validación en [{path}]: {e.message}"
+            f"Output de '{tool_name}' no pasa validación en [{loc}]: {msg}"
         ) from e
 
     return output
 
 
-# ── Validación de sugerencias para el grafo ───────────────────────────────────
+# ═══════════════════════════════════════════════════════════════════════
+# Validación de sugerencias (datos de entrada al grafo)
+# ═══════════════════════════════════════════════════════════════════════
 
 
-_SUGGESTION_REQUIRED_FIELDS = {
-    "source_doc_id": "ID del documento fuente",
-    "confidence_score": "Puntaje de confianza del agente",
-    "source_chunk_ids": "Lista de IDs de chunks fuente",
-}
+class _SuggestionData(BaseModel):
+    """Modelo Pydantic para validar datos de sugerencia.
+
+    Complementa la validación de tool suggest_update asegurando que
+    los campos requeridos existen antes de persistir en Postgres.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    source_doc_id: str = Field(min_length=1)
+    confidence_score: float = Field(ge=0.0, le=1.0)
+    source_chunk_ids: List[str] = Field(min_length=1)
 
 
 def validate_suggestion_data(suggestion: dict) -> dict:
     """Valida que un diccionario de sugerencia tenga los campos requeridos.
 
     Esta validación se ejecuta en generate_suggestions_node ANTES de persistir
-    una sugerencia en Postgres, complementando la validación JSON schema
+    una sugerencia en Postgres, complementando la validación Pydantic
     que ya ocurre dentro de la tool suggest_update.
 
     Args:
@@ -530,48 +415,41 @@ def validate_suggestion_data(suggestion: dict) -> dict:
     Raises:
         SuggestionDataValidationError: Si falta algún campo requerido o es inválido.
     """
-    missing = []
-    for field, desc in _SUGGESTION_REQUIRED_FIELDS.items():
-        value = suggestion.get(field)
-        if field == "confidence_score":
-            if value is None or not isinstance(value, (int, float)):
-                missing.append(f"{field} ({desc})")
-            elif value < 0.0 or value > 1.0:
-                raise SuggestionDataValidationError(
-                    f"Campo '{field}' con valor {value} fuera de rango [0.0, 1.0]"
-                )
-        elif field == "source_chunk_ids":
-            if value is None or not isinstance(value, list) or not value:
-                missing.append(f"{field} ({desc})")
-        elif field == "source_doc_id":
-            if not value or not isinstance(value, str):
-                missing.append(f"{field} ({desc})")
-        else:
-            if value is None:
-                missing.append(f"{field} ({desc})")
-
-    if missing:
+    try:
+        _SuggestionData.model_validate(suggestion)
+    except PydanticValidationError as e:
+        missing = []
+        for error in e.errors():
+            field = " → ".join(str(p) for p in error.get("loc", []))
+            missing.append(field)
         raise SuggestionDataValidationError(
             f"Sugerencia rechazada: campos requeridos faltantes o inválidos: "
             f"{', '.join(missing)}"
-        )
+        ) from e
 
     return suggestion
 
 
-# ── Validación de hallazgos de redundancia ───────────────────────────────────
+# ═══════════════════════════════════════════════════════════════════════
+# Validación de hallazgos de redundancia
+# ═══════════════════════════════════════════════════════════════════════
 
 
-_REDUNDANCY_FINDING_REQUIRED = [
-    "chunk_id_a",
-    "chunk_id_b",
-    "similarity",
-    "confidence_score",
-    "doc_id_a",
-    "doc_id_b",
-    "content_a_preview",
-    "content_b_preview",
-]
+class _RedundancyFinding(BaseModel):
+    """Modelo Pydantic para validar hallazgos de redundancia."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    chunk_id_a: str
+    chunk_id_b: str
+    similarity: float
+    confidence_score: float
+    doc_id_a: str
+    doc_id_b: str
+    content_a_preview: str
+    content_b_preview: str
+    token_count_a: Optional[int] = None
+    token_count_b: Optional[int] = None
 
 
 def validate_redundancy_finding(finding: dict) -> dict:
@@ -586,21 +464,16 @@ def validate_redundancy_finding(finding: dict) -> dict:
     Raises:
         SuggestionDataValidationError: Si falta algún campo requerido.
     """
-    missing = [f for f in _REDUNDANCY_FINDING_REQUIRED if f not in finding]
-    if missing:
+    try:
+        _RedundancyFinding.model_validate(finding)
+    except PydanticValidationError as e:
+        missing = []
+        for error in e.errors():
+            field = " → ".join(str(p) for p in error.get("loc", []))
+            missing.append(f"{field}: {error.get('msg', '')}")
         raise SuggestionDataValidationError(
-            f"Hallazgo de redundancia rechazado: campos faltantes: {', '.join(missing)}"
-        )
-
-    # Validar tipos
-    if not isinstance(finding.get("similarity"), (int, float)):
-        raise SuggestionDataValidationError(
-            f"Campo 'similarity' debe ser numérico, got {type(finding.get('similarity')).__name__}"
-        )
-    if not isinstance(finding.get("confidence_score"), (int, float)):
-        raise SuggestionDataValidationError(
-            f"Campo 'confidence_score' debe ser numérico, "
-            f"got {type(finding.get('confidence_score')).__name__}"
-        )
+            f"Hallazgo de redundancia rechazado: campos faltantes o inválidos: "
+            f"{'; '.join(missing)}"
+        ) from e
 
     return finding
