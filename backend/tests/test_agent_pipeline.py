@@ -24,6 +24,7 @@ import pytest
 from app.agents.graph import get_graph_info, run_curation
 from app.agents.nodes import (
     chunk_and_embed_node,
+    faq_generation_node,
     generate_suggestions_node,
     load_documents_node,
     redundancy_detection_node,
@@ -564,6 +565,211 @@ class TestGenerateSuggestionsNode:
 
 
 # =============================================================================
+#  TESTS: NODO faq_generation
+# =============================================================================
+
+
+class TestFaqGenerationNode:
+    """Generación automática de FAQs desde chunks."""
+
+    @patch("app.agents.nodes.AsyncSessionLocal")
+    @patch("app.tools.registry.generate_faq_entry")
+    @pytest.mark.asyncio
+    async def test_generates_faqs_from_chunks(
+        self, mock_generate_faq, mock_session_factory, mock_db_session
+    ):
+        """Genera FAQs para chunks con contenido suficiente."""
+        mock_session_factory.return_value.__aenter__.return_value = mock_db_session
+
+        # Mock generate_faq_entry to return success
+        # LangChain tool ainvoke passes a single dict argument
+        async def faq_side_effect(args: dict):
+            chunk_id = args.get("chunk_id", "")
+            content = args.get("chunk_content", "")
+            question = f"¿Qué es {content.split()[0]}?" if content else "¿Pregunta?"
+            return json.dumps(
+                {
+                    "status": "success",
+                    "faq": {
+                        "question": question,
+                        "answer": f"Respuesta sobre {content[:30]}...",
+                        "source_chunk_id": chunk_id,
+                        "topic": "general",
+                    },
+                }
+            )
+
+        mock_generate_faq.ainvoke = AsyncMock(side_effect=faq_side_effect)
+
+        doc_id = str(uuid.uuid4())
+        state: AgentState = {
+            "document_ids": [doc_id],
+            "documents_text": {},
+            "chunks": [
+                {
+                    "chroma_id": f"{doc_id}_chunk_0",
+                    "chunk_index": 0,
+                    "text": "El teorema de Pitágoras establece que en un triángulo rectángulo, "
+                    "el cuadrado de la hipotenusa es igual a la suma de los cuadrados "
+                    "de los catetos. Esta relación es fundamental en geometría.",
+                    "token_count": 30,
+                    "hash": "abc123",
+                    "page_number": 1,
+                },
+                {
+                    "chroma_id": f"{doc_id}_chunk_1",
+                    "chunk_index": 1,
+                    "text": "La derivada de una función mide la tasa de cambio instantánea. "
+                    "Se define como el límite del cociente incremental cuando "
+                    "el incremento tiende a cero.",
+                    "token_count": 25,
+                    "hash": "def456",
+                    "page_number": 2,
+                },
+            ],
+            "messages": [],
+            "suggestions": [],
+            "redundancy_findings": [],
+            "error": None,
+        }
+
+        result = await faq_generation_node(state)
+
+        assert "suggestions" in result
+        suggestions = result["suggestions"]
+        assert len(suggestions) == 2  # Una FAQ por chunk
+        for s in suggestions:
+            assert s["type"] == "faq"
+            assert "Pregunta:" in s["description"]
+            assert s["confidence_score"] == 0.85
+
+        # Verificar que se agregaron sugerencias a la sesión mockeada
+        added_suggestions = [
+            call.args[0]
+            for call in mock_db_session.add.call_args_list
+            if isinstance(call.args[0], Suggestion)
+        ]
+        assert len(added_suggestions) == 2
+        for sug in added_suggestions:
+            assert sug.type == SuggestionType.faq
+            assert sug.status == SuggestionStatus.pending
+
+        mock_db_session.commit.assert_awaited_once()
+
+    @patch("app.agents.nodes.AsyncSessionLocal")
+    @pytest.mark.asyncio
+    async def test_no_chunks_returns_empty(self, mock_session_factory, mock_db_session):
+        """Sin chunks no debe generar nada."""
+        mock_session_factory.return_value.__aenter__.return_value = mock_db_session
+
+        state: AgentState = {
+            "document_ids": [],
+            "documents_text": {},
+            "chunks": [],
+            "messages": [],
+            "suggestions": [],
+            "redundancy_findings": [],
+            "error": None,
+        }
+
+        result = await faq_generation_node(state)
+
+        assert result == {}
+
+    @patch("app.agents.nodes.AsyncSessionLocal")
+    @pytest.mark.asyncio
+    async def test_skips_chunks_without_chroma_id(
+        self, mock_session_factory, mock_db_session
+    ):
+        """Chunks sin chroma_id deben saltarse."""
+        mock_session_factory.return_value.__aenter__.return_value = mock_db_session
+
+        state: AgentState = {
+            "document_ids": [str(uuid.uuid4())],
+            "documents_text": {},
+            "chunks": [
+                {
+                    "chroma_id": "",
+                    "chunk_index": 0,
+                    "text": "Contenido de prueba con suficiente longitud para generar FAQ.",
+                    "token_count": 15,
+                    "hash": "ghi789",
+                    "page_number": 1,
+                },
+            ],
+            "messages": [],
+            "suggestions": [],
+            "redundancy_findings": [],
+            "error": None,
+        }
+
+        result = await faq_generation_node(state)
+
+        assert "suggestions" in result
+        assert len(result["suggestions"]) == 0
+
+    @patch("app.agents.nodes.AsyncSessionLocal")
+    @patch("app.tools.registry.generate_faq_entry")
+    @pytest.mark.asyncio
+    async def test_preserves_existing_suggestions(
+        self, mock_generate_faq, mock_session_factory, mock_db_session
+    ):
+        """No debe sobrescribir sugerencias existentes en el estado."""
+        mock_session_factory.return_value.__aenter__.return_value = mock_db_session
+
+        async def faq_side_effect(args: dict):
+            return json.dumps(
+                {
+                    "status": "success",
+                    "faq": {
+                        "question": "¿Pregunta de prueba?",
+                        "answer": "Respuesta de prueba.",
+                        "source_chunk_id": args.get("chunk_id", ""),
+                        "topic": "general",
+                    },
+                }
+            )
+
+        mock_generate_faq.ainvoke = AsyncMock(side_effect=faq_side_effect)
+
+        doc_id = str(uuid.uuid4())
+        existing_suggestion = {
+            "id": str(uuid.uuid4()),
+            "document_id": doc_id,
+            "type": "redundancy",
+            "description": "Redundancia existente",
+            "confidence_score": 0.9,
+        }
+        state: AgentState = {
+            "document_ids": [doc_id],
+            "documents_text": {},
+            "chunks": [
+                {
+                    "chroma_id": f"{doc_id}_chunk_0",
+                    "chunk_index": 0,
+                    "text": "Contenido educativo suficiente para generar una pregunta "
+                    "frecuente sobre este tema del curso.",
+                    "token_count": 20,
+                    "hash": "jkl012",
+                    "page_number": 1,
+                },
+            ],
+            "messages": [],
+            "suggestions": [existing_suggestion],
+            "redundancy_findings": [],
+            "error": None,
+        }
+
+        result = await faq_generation_node(state)
+
+        assert "suggestions" in result
+        # Debe tener la existente + la nueva FAQ
+        assert len(result["suggestions"]) == 2
+        assert result["suggestions"][0] == existing_suggestion
+        assert result["suggestions"][1]["type"] == "faq"
+
+
+# =============================================================================
 #  TESTS: NODO wait_human_approval
 # =============================================================================
 
@@ -846,6 +1052,7 @@ class TestGraphStructure:
             "load_documents",
             "chunk_and_embed",
             "redundancy_detection",
+            "faq_generation",
             "generate_suggestions",
             "wait_human_approval",
         }
@@ -897,6 +1104,7 @@ class TestGraphStructure:
         assert "load_documents" in info["nodes"]
         assert "chunk_and_embed" in info["nodes"]
         assert "redundancy_detection" in info["nodes"]
+        assert "faq_generation" in info["nodes"]
         assert "generate_suggestions" in info["nodes"]
         assert "wait_human_approval" in info["nodes"]
 
@@ -911,6 +1119,7 @@ class TestGraphStructure:
         assert "load_documents" in graph.nodes
         assert "chunk_and_embed" in graph.nodes
         assert "redundancy_detection" in graph.nodes
+        assert "faq_generation" in graph.nodes
         assert "generate_suggestions" in graph.nodes
         assert "wait_human_approval" in graph.nodes
 

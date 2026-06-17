@@ -10,7 +10,7 @@ aprovechando el sistema de tipos y validación que LangGraph ya utiliza.
 """
 
 import logging
-from typing import Annotated, Any, Dict, List, Literal, Optional, Union
+from typing import Annotated, Dict, List, Literal, Optional, Union
 
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter
 from pydantic import ValidationError as PydanticValidationError

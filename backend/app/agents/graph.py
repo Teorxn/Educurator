@@ -33,6 +33,7 @@ from langgraph.prebuilt import create_react_agent
 
 from app.agents.nodes import (
     chunk_and_embed_node,
+    faq_generation_node,
     generate_suggestions_node,
     load_documents_node,
     redundancy_detection_node,
@@ -226,11 +227,12 @@ def _build_graph() -> StateGraph:
       START → load_documents
         → (sin docs) → END
         → (con docs) → chunk_and_embed → redundancy_detection →
-          react_agent → generate_suggestions → wait_human_approval → END
+          react_agent → faq_generation → generate_suggestions →
+          wait_human_approval → END
 
     Si no hay LLM configurado, el grafo salta el nodo react_agent:
-      chunk_and_embed → redundancy_detection → generate_suggestions →
-      wait_human_approval → END
+      chunk_and_embed → redundancy_detection → faq_generation →
+      generate_suggestions → wait_human_approval → END
     """
     builder = StateGraph(AgentState)
 
@@ -238,6 +240,7 @@ def _build_graph() -> StateGraph:
     builder.add_node("load_documents", load_documents_node)
     builder.add_node("chunk_and_embed", chunk_and_embed_node)
     builder.add_node("redundancy_detection", redundancy_detection_node)
+    builder.add_node("faq_generation", faq_generation_node)
     builder.add_node("generate_suggestions", generate_suggestions_node)
     builder.add_node("wait_human_approval", wait_human_approval_node)
 
@@ -256,16 +259,19 @@ def _build_graph() -> StateGraph:
         {"continue": "chunk_and_embed", "end": END},
     )
 
-    # chunk_and_embed → redundancy_detection → react_agent (si existe)
-    #                                      → generate_suggestions (directo)
+    # chunk_and_embed → redundancy_detection
     builder.add_edge("chunk_and_embed", "redundancy_detection")
 
-    next_after_red = "react_agent" if _react_agent else "generate_suggestions"
+    # redundancy_detection → react_agent (si existe) → faq_generation
+    #                      → faq_generation (directo si no hay agente)
+    next_after_red = "react_agent" if _react_agent else "faq_generation"
     builder.add_edge("redundancy_detection", next_after_red)
 
     if _react_agent is not None:
-        builder.add_edge("react_agent", "generate_suggestions")
+        builder.add_edge("react_agent", "faq_generation")
 
+    # faq_generation → generate_suggestions → wait_human_approval → END
+    builder.add_edge("faq_generation", "generate_suggestions")
     builder.add_edge("generate_suggestions", "wait_human_approval")
     builder.add_edge("wait_human_approval", END)
 

@@ -113,7 +113,9 @@ class SuggestUpdateInput(StrictToolInput):
     reasoning: str = Field(
         default="",
         max_length=5000,
-        description="Razonamiento detallado del agente que justifica la sugerencia",
+        description="Razonamiento detallado del agente que justifica la sugerencia. "
+        "DEBE incluir los IDs de los chunks consultados "
+        "(source_chunk_ids) para permitir verificaci\u00f3n de evidencia.",
     )
 
 
@@ -502,12 +504,18 @@ async def suggest_update(
     La sugerencia se guarda en Postgres con estado 'pending'.
     NUNCA modifica contenido oficial directamente.
     El instructor debe aprobar o rechazar desde la UI.
+
+    #33 — Zero Hallucinations:
+    - source_doc_id y source_chunk_ids son OBLIGATORIOS.
+    - El reasoning DEBE mencionar los chunks consultados.
+    - La UI mostrará el contenido original de los chunks como evidencia.
     """
     logger.info(
-        "💡 suggest_update(doc=%s, type=%s, score=%.2f)",
+        "💡 suggest_update(doc=%s, type=%s, score=%.2f, chunks=%s)",
         document_id,
         suggestion_type,
         confidence_score,
+        source_chunk_ids,
     )
     try:
         from app.database import AsyncSessionLocal

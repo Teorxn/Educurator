@@ -11,7 +11,14 @@ from app.api.dependencies import get_current_user
 from app.config import settings
 from app.database import get_db
 from app.models.models import Document, DocumentStatus, User
-from app.schemas.docs import DocsListResponse, DocumentResponse, PatchDocumentRequest
+from app.schemas.docs import (
+    DocHistoryListResponse,
+    DocsListResponse,
+    DocumentHistoryResponse,
+    DocumentResponse,
+    PatchDocumentRequest,
+)
+from app.services.history import get_document_history, record_document_history
 
 router = APIRouter(prefix="/api/docs", tags=["documents"])
 
@@ -80,6 +87,31 @@ async def get_doc(
     return doc
 
 
+# ── GET /api/docs/{id}/history ──────────────────────────────────────────────
+
+
+@router.get("/{doc_id}/history", response_model=DocHistoryListResponse)
+async def get_doc_history(
+    doc_id: uuid.UUID,
+    page: int = Query(1, ge=1),
+    limit: int = Query(20, ge=1, le=100),
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(get_current_user),
+):
+    # Verify document exists
+    doc = (
+        await db.execute(select(Document).where(Document.id == doc_id))
+    ).scalar_one_or_none()
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found")
+
+    items, total = await get_document_history(db, doc_id, page=page, limit=limit)
+    return DocHistoryListResponse(
+        items=[DocumentHistoryResponse.model_validate(h) for h in items],
+        total=total,
+    )
+
+
 # ── PATCH /api/docs/{id} ────────────────────────────────────────────────────
 
 
@@ -88,7 +120,7 @@ async def patch_doc(
     doc_id: uuid.UUID,
     body: PatchDocumentRequest,
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user),
 ):
     doc = (
         await db.execute(select(Document).where(Document.id == doc_id))
@@ -96,7 +128,33 @@ async def patch_doc(
     if not doc:
         raise HTTPException(status_code=404, detail="Document not found")
 
-    if body.status is not None:
+    if body.status is not None and body.status != doc.status:
+        # Snapshot before state
+        before_content = {
+            "status": doc.status.value,
+            "updated_at": (doc.updated_at.isoformat() if doc.updated_at else None),
+        }
+
+        doc.status = body.status
+        await db.flush()
+
+        # Snapshot after state
+        after_content = {
+            "status": doc.status.value,
+            "updated_at": (doc.updated_at.isoformat() if doc.updated_at else None),
+        }
+
+        # Record history for approve / reject / archive actions
+        await record_document_history(
+            db,
+            doc_id=doc.id,
+            action=body.status.value,  # "approved", "rejected", "archived", etc.
+            performed_by=current_user.id,
+            before_content=before_content,
+            after_content=after_content,
+            reason=body.reason,
+        )
+    elif body.status is not None:
         doc.status = body.status
 
     await db.commit()

@@ -94,18 +94,43 @@ async def _run_with_retry(coro_factory, max_retries: int = _MAX_RETRIES):
 
 
 def _format_doc_context(state: "AgentState") -> str:
-    """Construye el contexto que recibe el agente con los docs y chunks disponibles."""
+    """Construye el contexto que recibe el agente con los docs y chunks disponibles.
+
+    #33 — Incluye los IDs de chunks disponibles para que el agente pueda
+    referenciarlos explícitamente en su razonamiento.
+    """
     n_docs = len(state.get("document_ids", []))
     n_chunks = len(state.get("chunks", []))
     doc_list = "\n".join(
         f"  - Documento {i + 1}: id={doc_id}"
         for i, doc_id in enumerate(state.get("document_ids", []))
     )
+
+    # #33 — Listar chunks disponibles con sus IDs
+    chunks = state.get("chunks", [])
+    if chunks:
+        chunk_list = "\n".join(
+            f"  - Chunk {c.get('chunk_index', i)}: "
+            f"chroma_id={c.get('chroma_id', 'N/A')}, "
+            f"tokens={c.get('token_count', 0)}, "
+            f"doc_id={c.get('doc_id', 'N/A')}"
+            for i, c in enumerate(chunks[:20])  # Limitar a 20 para no saturar
+        )
+        if len(chunks) > 20:
+            chunk_list += f"\n  ... y {len(chunks) - 20} chunks m\u00e1s"
+    else:
+        chunk_list = "  (ninguno)"
+
     return (
         f"Documentos cargados: {n_docs}\n"
         f"{doc_list}\n"
         f"Chunks generados: {n_chunks}\n"
-        f"Contenido disponible para análisis."
+        f"{chunk_list}\n\n"
+        f"REGLAS:\n"
+        f"1. Cada sugerencia debe referenciar OBLIGATORIAMENTE el(s) chroma_id(s) "
+        f"de los chunks que respaldan la evidencia.\n"
+        f"2. Incluye los IDs en el campo 'reasoning' de suggest_update.\n"
+        f"3. Respuestas sin source_chunk_ids v\u00e1lidos ser\u00e1n rechazadas."
     )
 
 
@@ -358,6 +383,140 @@ async def redundancy_detection_node(state: "AgentState") -> dict:
 # personalizados del grafo principal.
 
 
+# ── Nodo 4.5: faq_generation_node ─────────────────────────────────────────────
+
+
+async def faq_generation_node(state: "AgentState") -> dict:
+    """Genera entradas FAQ automáticamente a partir de los chunks del curso.
+
+    Para cada chunk en el estado, invoca generate_faq_entry para producir
+    un par pregunta/respuesta y lo persiste como Suggestion con type=faq
+    en estado pending.
+
+    El instructor debe aprobar cada FAQ (vía API) antes de que sea oficial.
+    """
+    logger.info("=" * 50)
+    logger.info("❓ faq_generation_node — generando FAQs desde chunks")
+    logger.info("=" * 50)
+
+    chunks = state.get("chunks", [])
+    if not chunks:
+        logger.info("  ℹ️  No hay chunks para generar FAQs")
+        return {}
+
+    from app.tools.registry import generate_faq_entry as _generate_faq_entry
+
+    new_suggestions: list[dict] = []
+    errors: list[str] = []
+
+    async with AsyncSessionLocal() as db:
+        for chunk in chunks:
+            chunk_id = chunk.get("chroma_id", "")
+            chunk_content = chunk.get("text", "")
+
+            # Saltar chunks sin contenido suficiente
+            if not chunk_id or len(chunk_content.strip()) < 20:
+                continue
+
+            # Extraer document_id del chroma_id (formato: "{uuid}_chunk_{n}")
+            doc_id = chunk_id.rsplit("_chunk_", 1)[0] if "_chunk_" in chunk_id else ""
+            if not doc_id:
+                logger.warning(
+                    "  ⚠️  No se pudo extraer doc_id de chroma_id: %s", chunk_id
+                )
+                continue
+
+            try:
+                # Invocar generate_faq_entry directamente
+                result_json = await _generate_faq_entry.ainvoke(
+                    {
+                        "chunk_id": chunk_id,
+                        "chunk_content": chunk_content,
+                        "topic": "general",
+                    }
+                )
+                payload = json.loads(result_json)
+
+                if payload.get("status") != "success":
+                    logger.warning(
+                        "  ⚠️  generate_faq_entry falló para chunk %s: %s",
+                        chunk_id,
+                        payload.get("error", "unknown error"),
+                    )
+                    continue
+
+                faq = payload.get("faq", {})
+                question = faq.get("question", "")
+                answer = faq.get("answer", "")
+
+                if not question or not answer:
+                    logger.warning(
+                        "  ⚠️  FAQ vacía generada para chunk %s, saltando",
+                        chunk_id,
+                    )
+                    continue
+
+                # Crear Suggestion type=faq en estado pending
+                doc_uuid = uuid.UUID(doc_id)
+                description = f"Pregunta: {question}"
+                reasoning_text = f"Respuesta: {answer}"
+
+                suggestion = Suggestion(
+                    document_id=doc_uuid,
+                    type=SuggestionType.faq,
+                    description=description,
+                    source_doc_id=doc_id,
+                    source_chunk_ids=[chunk_id],
+                    confidence_score=0.85,
+                    reasoning=reasoning_text,
+                    status=SuggestionStatus.pending,
+                )
+                db.add(suggestion)
+                await db.flush()
+
+                suggestion_data = {
+                    "id": str(suggestion.id),
+                    "document_id": doc_id,
+                    "type": "faq",
+                    "description": description,
+                    "confidence_score": 0.85,
+                    "question": question,
+                    "answer": answer,
+                }
+                new_suggestions.append(suggestion_data)
+                logger.info(
+                    "  ✅ FAQ generada: chunk=%s | Q: %s",
+                    chunk_id,
+                    question[:60],
+                )
+
+            except (json.JSONDecodeError, ValueError) as e:
+                errors.append(f"Chunk {chunk_id}: error de parseo: {e}")
+                logger.warning(
+                    "  ⚠️  Error parseando FAQ para chunk %s: %s", chunk_id, e
+                )
+            except Exception as e:
+                errors.append(f"Chunk {chunk_id}: {e}")
+                logger.warning(
+                    "  ⚠️  Error generando FAQ para chunk %s: %s", chunk_id, e
+                )
+
+        await db.commit()
+
+    if errors:
+        logger.warning(
+            "  ⚠️  Errores parciales generando FAQs (%d): %s",
+            len(errors),
+            "; ".join(errors[:3]),
+        )
+
+    logger.info("  📊 FAQs generadas: %d", len(new_suggestions))
+
+    # Combinar con sugerencias existentes del estado
+    existing = state.get("suggestions", [])
+    return {"suggestions": existing + new_suggestions}
+
+
 # ── Nodo 5: generate_suggestions_node ────────────────────────────────────────
 
 
@@ -416,11 +575,17 @@ async def generate_suggestions_node(state: "AgentState") -> dict:
                             "type": payload["type"],
                             "description": payload.get("message", ""),
                             "confidence_score": payload["confidence_score"],
+                            # #33 — Incluir evidencia de chunks en tracking
+                            "source_doc_id": payload.get("source_doc_id", ""),
+                            "source_chunk_ids": payload.get("source_chunk_ids", []),
                         }
                     )
                     logger.info(
-                        "  ✅ Sugerencia del agente registrada por tool: %s",
+                        "  ✅ Sugerencia del agente registrada por tool: %s "
+                        "(chunks: %s, doc: %s)",
                         payload["suggestion_id"],
+                        payload.get("source_chunk_ids", []),
+                        payload.get("source_doc_id", ""),
                     )
                 except Exception as e:
                     logger.warning(

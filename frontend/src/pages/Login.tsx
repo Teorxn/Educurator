@@ -1,31 +1,33 @@
-import { useState, FormEvent } from 'react'
-import { useNavigate, Navigate } from 'react-router-dom'
-import { Loader2, AlertCircle } from 'lucide-react'
-import { login } from '../api/docs'
+import { useState } from "react";
+import type { FormEvent } from "react";
+import { useNavigate, Navigate } from "react-router-dom";
+import { Loader2, AlertCircle } from "lucide-react";
+import { login } from "../api/docs";
 
 export default function Login() {
-  const navigate = useNavigate()
-  const [email, setEmail] = useState('')
-  const [password, setPassword] = useState('')
-  const [error, setError] = useState('')
-  const [loading, setLoading] = useState(false)
+  const navigate = useNavigate();
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false);
 
-  if (localStorage.getItem('access_token')) return <Navigate to="/docs" replace />
+  if (localStorage.getItem("access_token"))
+    return <Navigate to="/docs" replace />;
 
   const handleSubmit = async (e: FormEvent) => {
-    e.preventDefault()
-    setError('')
-    setLoading(true)
+    e.preventDefault();
+    setError("");
+    setLoading(true);
     try {
-      const { data } = await login(email, password)
-      localStorage.setItem('access_token', data.access_token)
-      navigate('/docs')
+      const { data } = await login(email, password);
+      localStorage.setItem("access_token", data.access_token);
+      navigate("/docs");
     } catch {
-      setError('Credenciales incorrectas. Verifica tu correo y contraseña.')
+      setError("Credenciales incorrectas. Verifica tu correo y contraseña.");
     } finally {
-      setLoading(false)
+      setLoading(false);
     }
-  }
+  };
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-violet-950 flex items-center justify-center p-4">
@@ -33,15 +35,25 @@ export default function Login() {
         {/* Brand */}
         <div className="flex flex-col items-center mb-8">
           <div className="w-14 h-14 bg-slate-700 rounded-2xl flex items-center justify-center mb-4 shadow-lg shadow-black/40">
-            <img src="/Softserve.png" alt="SoftServe" className="w-9 h-9 object-contain" />
+            <img
+              src="/Softserve.png"
+              alt="SoftServe"
+              className="w-9 h-9 object-contain"
+            />
           </div>
-          <h1 className="text-2xl font-bold text-white tracking-tight">EduCurator AI</h1>
-          <p className="text-slate-400 text-sm mt-1">Sistema de curación de conocimiento</p>
+          <h1 className="text-2xl font-bold text-white tracking-tight">
+            EduCurator AI
+          </h1>
+          <p className="text-slate-400 text-sm mt-1">
+            Sistema de curación de conocimiento
+          </p>
         </div>
 
         {/* Card */}
         <div className="bg-white rounded-2xl shadow-2xl p-8">
-          <h2 className="text-xl font-semibold text-gray-900 mb-6">Iniciar sesión</h2>
+          <h2 className="text-xl font-semibold text-gray-900 mb-6">
+            Iniciar sesión
+          </h2>
 
           <form onSubmit={handleSubmit} className="space-y-4">
             <div>
@@ -86,7 +98,7 @@ export default function Login() {
               className="w-full bg-violet-600 hover:bg-violet-700 disabled:opacity-60 disabled:cursor-not-allowed text-white font-medium py-2.5 px-4 rounded-lg transition-colors flex items-center justify-center gap-2 mt-2"
             >
               {loading && <Loader2 className="w-4 h-4 animate-spin" />}
-              {loading ? 'Iniciando sesión...' : 'Entrar'}
+              {loading ? "Iniciando sesión..." : "Entrar"}
             </button>
           </form>
         </div>
@@ -96,5 +108,5 @@ export default function Login() {
         </p>
       </div>
     </div>
-  )
+  );
 }

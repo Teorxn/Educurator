@@ -6,6 +6,7 @@ HU-12: Rechazar sugerencias
 HU-14: Revisar FAQs (type=faq)
 HU-15: Proporcionar retroalimentación al agente
 """
+
 import uuid
 from datetime import datetime, timezone
 
@@ -30,9 +31,10 @@ from app.schemas.suggestions import (
     FeedbackRequest,
     RejectRequest,
     RejectResponse,
-    SuggestionsListResponse,
     SuggestionResponse,
+    SuggestionsListResponse,
 )
+from app.services.evidence import get_chunks_evidence
 
 router = APIRouter(prefix="/api/suggestions", tags=["suggestions"])
 
@@ -71,8 +73,10 @@ async def list_suggestions(
 
     total = (await db.execute(count_q)).scalar_one()
     items = (
-        await db.execute(query.offset((page - 1) * limit).limit(limit))
-    ).scalars().all()
+        (await db.execute(query.offset((page - 1) * limit).limit(limit)))
+        .scalars()
+        .all()
+    )
 
     result = []
     for s in items:
@@ -81,6 +85,19 @@ async def list_suggestions(
         ).scalar_one_or_none()
         resp = SuggestionResponse.model_validate(s)
         resp.document_name = doc.filename if doc else None
+
+        # #33 — Enriquecer con evidencia de chunks (original fragment)
+        if s.source_chunk_ids:
+            try:
+                chunk_ids = list(s.source_chunk_ids)
+            except (TypeError, ValueError):
+                chunk_ids = []
+            if chunk_ids:
+                raw_chunks = await get_chunks_evidence(db, chunk_ids)
+                from app.schemas.suggestions import ChunkEvidenceItem
+
+                resp.source_chunks = [ChunkEvidenceItem(**c) for c in raw_chunks]
+
         result.append(resp)
 
     return SuggestionsListResponse(items=result, total=total)
@@ -128,7 +145,9 @@ async def approve_suggestion(
     feedback = FeedbackPattern(
         suggestion_id=suggestion.id,
         feedback_type="approve",
-        context=str({"type": suggestion.type.value, "confidence": suggestion.confidence_score}),
+        context=str(
+            {"type": suggestion.type.value, "confidence": suggestion.confidence_score}
+        ),
     )
     db.add(feedback)
 
@@ -190,7 +209,9 @@ async def reject_suggestion(
         suggestion_id=suggestion.id,
         feedback_type="reject",
         comment=body.reason.strip(),
-        context=str({"type": suggestion.type.value, "confidence": suggestion.confidence_score}),
+        context=str(
+            {"type": suggestion.type.value, "confidence": suggestion.confidence_score}
+        ),
     )
     db.add(feedback)
 

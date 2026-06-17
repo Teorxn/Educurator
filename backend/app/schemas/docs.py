@@ -22,5 +22,24 @@ class DocsListResponse(BaseModel):
     total: int
 
 
+class DocumentHistoryResponse(BaseModel):
+    id: uuid.UUID
+    doc_id: uuid.UUID | None
+    action: str
+    performed_by: uuid.UUID | None
+    before_content: dict | None
+    after_content: dict | None
+    reason: str | None
+    timestamp: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class DocHistoryListResponse(BaseModel):
+    items: list[DocumentHistoryResponse]
+    total: int
+
+
 class PatchDocumentRequest(BaseModel):
     status: DocumentStatus | None = None
+    reason: str | None = None
