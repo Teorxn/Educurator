@@ -13,6 +13,7 @@ Tools:
   6. log_action        — Persistencia de acciones en audit trail
 """
 
+import asyncio
 import json
 import logging
 import uuid
@@ -21,6 +22,8 @@ from typing import List, Optional
 from langchain_core.tools import tool
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.config import settings
+from app.rag.redundancy import _cosine_similarity
 from app.tools.guardrails import ToolOutputValidationError, validate_tool_output
 
 logger = logging.getLogger(__name__)
@@ -140,11 +143,14 @@ class DetectRedundancyInput(StrictToolInput):
         min_length=1,
         description="ID del chunk a evaluar en ChromaDB",
     )
-    threshold: float = Field(
-        default=0.90,
+    threshold: Optional[float] = Field(
+        default=None,
         ge=0.0,
         le=1.0,
-        description="Umbral de similitud coseno para considerar redundancia (0.0-1.0)",
+        description=(
+            "Umbral de similitud coseno (0.0-1.0). "
+            "Si no se especifica, usa REDUNDANCY_THRESHOLD de la configuración."
+        ),
     )
     max_pairs: int = Field(
         default=10,
@@ -182,21 +188,6 @@ class LogInput(StrictToolInput):
     )
 
 
-# ── Funciones auxiliares ─────────────────────────────────────────────────────
-
-
-def _cosine_similarity(a: list[float], b: list[float]) -> float:
-    """Computa la similitud coseno entre dos vectores."""
-    import math
-
-    dot = sum(x * y for x, y in zip(a, b))
-    norm_a = math.sqrt(sum(x * x for x in a))
-    norm_b = math.sqrt(sum(x * x for x in b))
-    if norm_a == 0 or norm_b == 0:
-        return 0.0
-    return round(dot / (norm_a * norm_b), 4)
-
-
 def _compute_embedding(text: str) -> list[float]:
     """Genera embedding para un texto usando sentence-transformers."""
     from app.rag.embeddings import get_embedding_model
@@ -228,7 +219,8 @@ async def search_documents(query: str, top_k: int = 5) -> str:
         query_emb = _compute_embedding(query)
         collection = _get_chroma_collection()
 
-        results = collection.query(
+        results = await asyncio.to_thread(
+            collection.query,
             query_embeddings=[query_emb],
             n_results=top_k,
             include=["documents", "metadatas", "distances"],
@@ -294,13 +286,17 @@ async def compare_content(chunk_id_a: str, chunk_id_b: str) -> str:
         collection = _get_chroma_collection()
 
         # Obtener ambos chunks con sus embeddings
-        result_a = collection.get(
-            ids=[chunk_id_a],
-            include=["documents", "metadatas", "embeddings"],
-        )
-        result_b = collection.get(
-            ids=[chunk_id_b],
-            include=["documents", "metadatas", "embeddings"],
+        result_a, result_b = await asyncio.gather(
+            asyncio.to_thread(
+                collection.get,
+                ids=[chunk_id_a],
+                include=["documents", "metadatas", "embeddings"],
+            ),
+            asyncio.to_thread(
+                collection.get,
+                ids=[chunk_id_b],
+                include=["documents", "metadatas", "embeddings"],
+            ),
         )
 
         if not result_a["ids"] or not result_b["ids"]:
@@ -394,13 +390,17 @@ async def detect_conflict(doc_id_a: str, doc_id_b: str) -> str:
         collection = _get_chroma_collection()
 
         # Obtener todos los chunks de cada documento
-        chunks_a = collection.get(
-            where={"doc_id": doc_id_a},
-            include=["documents", "metadatas", "embeddings"],
-        )
-        chunks_b = collection.get(
-            where={"doc_id": doc_id_b},
-            include=["documents", "metadatas", "embeddings"],
+        chunks_a, chunks_b = await asyncio.gather(
+            asyncio.to_thread(
+                collection.get,
+                where={"doc_id": doc_id_a},
+                include=["documents", "metadatas", "embeddings"],
+            ),
+            asyncio.to_thread(
+                collection.get,
+                where={"doc_id": doc_id_b},
+                include=["documents", "metadatas", "embeddings"],
+            ),
         )
 
         if not chunks_a["ids"]:
@@ -576,49 +576,52 @@ async def generate_faq_entry(
 ) -> str:
     """Genera un par pregunta/respuesta estructurado desde un chunk educativo.
 
-    Analiza el contenido del chunk y extrae la información más relevante
-    para construir una pregunta y su respuesta, basándose exclusivamente
-    en el contenido proporcionado (sin alucinaciones).
+    Si hay un LLM configurado (Gemini / OpenAI / HuggingFace), lo usa para generar
+    una FAQ más natural y precisa. De lo contrario, usa una heurística basada en
+    extracción de oraciones como fallback.
+
+    Siempre se basa exclusivamente en el contenido proporcionado (sin alucinaciones).
     """
     logger.info("❓ generate_faq_entry(chunk=%s, topic='%s')", chunk_id, topic)
     try:
-        # Extraer oraciones del chunk
         import re
 
-        sentences = re.split(r"(?<=[.!?])\s+", chunk_content.strip())
-        sentences = [s.strip() for s in sentences if len(s.strip()) > 20]
-
-        if not sentences:
-            error_result = {
-                "status": "error",
-                "error": "El chunk no contiene contenido suficiente para generar una FAQ",
-            }
-            validate_tool_output("generate_faq_entry", error_result)
-            return json.dumps(error_result, ensure_ascii=False)
-
-        # Estrategia: usar la primera oración sustantiva como base para la pregunta
-        # y el resto como respuesta
-        best_sentence = max(sentences, key=len)
-        other_content = [s for s in sentences if s != best_sentence]
-
-        # Construir pregunta basada en el tema y el contenido
-        if topic and topic != "general":
-            question = f"¿Qué información hay sobre {topic} en el curso?"
+        # Intentar uso de LLM si está disponible
+        faq = await _generate_faq_with_llm(chunk_content, topic)
+        if faq is not None:
+            question, answer = faq
         else:
-            # Extraer palabras clave para formular pregunta
-            words = best_sentence.split()
-            key_phrases = []
-            for i, w in enumerate(words):
-                if w[0].isupper() and len(w) > 2 and i < len(words) - 1:
-                    key_phrases.append(f"{w} {words[i + 1]}")
-            if key_phrases:
-                question = f"¿Qué es {' '.join(key_phrases[:3])}?"
-            else:
-                question = "¿Qué información se presenta sobre este tema?"
+            # Fallback: heurística basada en oraciones
+            sentences = re.split(r"(?<=[.!?])\s+", chunk_content.strip())
+            sentences = [s.strip() for s in sentences if len(s.strip()) > 20]
 
-        answer = "\n".join([best_sentence] + other_content[:3])
-        if len(answer) > 1000:
-            answer = answer[:1000] + "..."
+            if not sentences:
+                error_result = {
+                    "status": "error",
+                    "error": "El chunk no contiene contenido suficiente para generar una FAQ",
+                }
+                validate_tool_output("generate_faq_entry", error_result)
+                return json.dumps(error_result, ensure_ascii=False)
+
+            best_sentence = max(sentences, key=len)
+            other_content = [s for s in sentences if s != best_sentence]
+
+            if topic and topic != "general":
+                question = f"¿Qué información hay sobre {topic} en el curso?"
+            else:
+                words = best_sentence.split()
+                key_phrases = []
+                for i, w in enumerate(words):
+                    if w[0].isupper() and len(w) > 2 and i < len(words) - 1:
+                        key_phrases.append(f"{w} {words[i + 1]}")
+                if key_phrases:
+                    question = f"¿Qué es {' '.join(key_phrases[:3])}?"
+                else:
+                    question = "¿Qué información se presenta sobre este tema?"
+
+            answer = "\n".join([best_sentence] + other_content[:3])
+            if len(answer) > 1000:
+                answer = answer[:1000] + "..."
 
         result = {
             "status": "success",
@@ -644,7 +647,84 @@ async def generate_faq_entry(
         return json.dumps(error_result)
 
 
-# ── Tool 7: detect_redundancy ────────────────────────────────────────────────
+async def _generate_faq_with_llm(
+    chunk_content: str,
+    topic: str,
+) -> Optional[tuple[str, str]]:
+    """Intenta generar FAQ usando el LLM configurado.
+
+    Returns:
+        Tupla (question, answer) si hay LLM disponible, None si se debe usar fallback.
+    """
+    from app.agents.graph import get_llm
+
+    llm = get_llm()
+    if llm is None:
+        return None
+
+    from langchain_core.messages import HumanMessage, SystemMessage
+
+    system_prompt = SystemMessage(
+        content=(
+            "Eres un asistente que genera preguntas frecuentes (FAQ) "
+            "para cursos universitarios. Basándote SOLO en el contenido "
+            "proporcionado, genera una pregunta relevante y su respuesta clara.\n\n"
+            "REGLAS:\n"
+            "- No inventes información que no esté en el texto\n"
+            "- La pregunta debe ser natural y útil para un estudiante\n"
+            "- La respuesta debe ser concisa (máx. 3 oraciones)\n"
+            "- Responde en español\n"
+            f"- Temática: {topic}"
+        )
+    )
+    human_prompt = HumanMessage(
+        content=(
+            f"Genera una pregunta frecuente y su respuesta basada en este contenido:\n\n"
+            f"{chunk_content[:2000]}"
+        )
+    )
+
+    try:
+        response = await llm.ainvoke([system_prompt, human_prompt])
+        if isinstance(response.content, str):
+            text = response.content.strip()
+        else:
+            # Handle list[str | dict] (multimodal content)
+            parts = []
+            for item in response.content:
+                if isinstance(item, str):
+                    parts.append(item)
+                elif isinstance(item, dict):
+                    parts.append(item.get("text", ""))
+            text = " ".join(parts).strip()
+
+        # Intentar extraer pregunta y respuesta del formato "Q: ... A: ..." o similar
+        import re
+
+        q_match = re.search(
+            r"(?:Pregunta|Q|Question)[:\s]*([^\n]+)", text, re.IGNORECASE
+        )
+        a_match = re.search(
+            r"(?:Respuesta|R|Answer|A)[:\s]*([^\n]+)",
+            text,
+            re.IGNORECASE,
+        )
+
+        if q_match and a_match:
+            return q_match.group(1).strip(), a_match.group(1).strip()
+
+        # Fallback: usar la primera línea como pregunta, el resto como respuesta
+        lines = [line.strip() for line in text.split("\n") if line.strip()]
+        if len(lines) >= 2:
+            return lines[0], " ".join(lines[1:])
+        return text, text
+
+    except Exception as e:
+        logger.warning("LLM falló generando FAQ, usando fallback: %s", e)
+        return None
+
+
+# ── Tool 6: log_action ──────────────────────────────────────────────────
 
 
 @tool(args_schema=LogInput)
@@ -666,16 +746,26 @@ async def log_action(
         agent_step,
     )
     try:
-        # Registrar en Postgres como DocumentHistory genérico.
-        # document_id es opcional: las acciones globales del agente no deben inventar
-        # un UUID que viole la FK de documents.
         from datetime import datetime, timezone
 
         from app.database import AsyncSessionLocal
         from app.models.models import DocumentHistory
 
         timestamp = datetime.now(timezone.utc)
-        doc_uuid = uuid.UUID(document_id) if document_id else None
+
+        # Validar document_id solo si se provee — es opcional para acciones
+        # globales del agente (ej: "agent_started", "search_completed").
+        # DocumentHistory.doc_id acepta NULL.
+        doc_uuid = None
+        if document_id:
+            try:
+                doc_uuid = uuid.UUID(document_id)
+            except ValueError:
+                logger.warning(
+                    "document_id '%s' no es un UUID válido, se omite",
+                    document_id,
+                )
+
         context = {
             "action": action,
             "detail": detail,
@@ -733,7 +823,7 @@ async def log_action(
 @tool(args_schema=DetectRedundancyInput)
 async def detect_redundancy(
     chunk_id: str,
-    threshold: float = 0.90,
+    threshold: Optional[float] = None,
     max_pairs: int = 10,
     include_same_doc: bool = True,
 ) -> str:
@@ -742,14 +832,17 @@ async def detect_redundancy(
     Compara el embedding de un chunk contra todos los demás en ChromaDB
     y retorna aquellos pares cuya similitud coseno supere el threshold.
     Incluye confidence_score compuesto (similitud + contexto + consistencia).
+
+    Si no se especifica threshold, usa REDUNDANCY_THRESHOLD de la config.
     """
-    from app.rag.redundancy import detect_redundancy as core_detect
+    from app.rag.redundancy import detect_redundancy_report as core_detect
     from app.rag.redundancy import redundancy_report_to_json
 
+    effective = threshold if threshold is not None else settings.REDUNDANCY_THRESHOLD
     logger.info(
         "🔍 detect_redundancy(chunk=%s, threshold=%.2f, max_pairs=%d, same_doc=%s)",
         chunk_id,
-        threshold,
+        effective,
         max_pairs,
         include_same_doc,
     )

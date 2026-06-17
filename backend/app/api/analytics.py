@@ -3,9 +3,11 @@ HU-17: Historial de cambios   → GET /api/docs/{id}/history
 HU-18: Métricas del sistema   → GET /api/analytics
 HU-02: Gestión de usuarios    → GET/POST /api/users  (admin only)
 """
+
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, status
+from pydantic import BaseModel, EmailStr
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -14,16 +16,12 @@ from app.database import get_db
 from app.models.models import (
     Document,
     DocumentHistory,
-    DocumentStatus,
     Suggestion,
-    SuggestionStatus,
-    SuggestionType,
     User,
     UserRole,
 )
 from app.schemas.suggestions import AnalyticsResponse, DocumentHistoryEntry
 from app.utils.security import hash_password
-from pydantic import BaseModel, EmailStr
 
 router = APIRouter(tags=["analytics & admin"])
 
@@ -54,22 +52,28 @@ async def get_analytics(
     _: User = Depends(get_current_user),
 ):
     # Document counts by status
-    doc_rows = (await db.execute(
-        select(Document.status, func.count()).group_by(Document.status)
-    )).all()
+    doc_rows = (
+        await db.execute(
+            select(Document.status, func.count()).group_by(Document.status)
+        )
+    ).all()
     by_status = {r[0].value: r[1] for r in doc_rows}
     total_docs = sum(by_status.values())
 
     # Suggestion counts
-    sug_status_rows = (await db.execute(
-        select(Suggestion.status, func.count()).group_by(Suggestion.status)
-    )).all()
+    sug_status_rows = (
+        await db.execute(
+            select(Suggestion.status, func.count()).group_by(Suggestion.status)
+        )
+    ).all()
     sug_by_status = {r[0].value: r[1] for r in sug_status_rows}
     total_sug = sum(sug_by_status.values())
 
-    sug_type_rows = (await db.execute(
-        select(Suggestion.type, func.count()).group_by(Suggestion.type)
-    )).all()
+    sug_type_rows = (
+        await db.execute(
+            select(Suggestion.type, func.count()).group_by(Suggestion.type)
+        )
+    ).all()
     sug_by_type = {r[0].value: r[1] for r in sug_type_rows}
 
     approved = sug_by_status.get("approved", 0)
@@ -113,13 +117,17 @@ async def list_users(
     return list(result.scalars().all())
 
 
-@router.post("/api/users", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/api/users", response_model=UserResponse, status_code=status.HTTP_201_CREATED
+)
 async def create_user(
     body: CreateUserRequest,
     db: AsyncSession = Depends(get_db),
     _: User = Depends(require_role(UserRole.admin)),
 ):
-    existing = (await db.execute(select(User).where(User.email == body.email))).scalar_one_or_none()
+    existing = (
+        await db.execute(select(User).where(User.email == body.email))
+    ).scalar_one_or_none()
     if existing:
         raise HTTPException(status_code=409, detail="Email already registered")
 
@@ -141,7 +149,9 @@ async def update_user_role(
     db: AsyncSession = Depends(get_db),
     current_admin: User = Depends(require_role(UserRole.admin)),
 ):
-    user = (await db.execute(select(User).where(User.id == user_id))).scalar_one_or_none()
+    user = (
+        await db.execute(select(User).where(User.id == user_id))
+    ).scalar_one_or_none()
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
 
@@ -152,7 +162,7 @@ async def update_user_role(
 
     # Audit trail for role change
     history = DocumentHistory(
-        doc_id=user_id,   # reusing doc_id as generic entity_id — ok for MVP
+        doc_id=user_id,  # reusing doc_id as generic entity_id — ok for MVP
         action=f"role_changed:{old_role.value}→{body.role.value}",
         performed_by=current_admin.id,
     )

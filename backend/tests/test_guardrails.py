@@ -12,7 +12,10 @@ Valida que:
 import pytest
 from app.tools.guardrails import (
     TOOL_OUTPUT_SCHEMAS,
+    SuggestionDataValidationError,
     ToolOutputValidationError,
+    validate_redundancy_finding,
+    validate_suggestion_data,
     validate_tool_output,
 )
 
@@ -402,46 +405,9 @@ class TestUnknownTool:
 class TestSuggestionRequiredFields:
     """Valida que las sugerencias requieran source_doc_id y confidence_score.
 
-    Esta prueba se enfoca en la validación de generate_suggestions_node
-    mediante _validate_suggestion_fields, que es independiente del schema
-    de output de la tool suggest_update.
+    Usa validate_suggestion_data() de guardrails directamente,
+    que es la función centralizada de validación de sugerencias.
     """
-
-    def _validate_suggestion_fields(self, args: dict):
-        """Copia la lógica de nodes.py para test unitario sin dependencias."""
-        from app.tools.guardrails import ToolOutputValidationError
-
-        required_fields = {
-            "source_doc_id": "ID del documento fuente",
-            "confidence_score": "Puntaje de confianza del agente",
-            "source_chunk_ids": "Lista de IDs de chunks fuente",
-        }
-
-        missing = []
-        for field, desc in required_fields.items():
-            value = args.get(field)
-            if field == "confidence_score":
-                if value is None or not isinstance(value, (int, float)):
-                    missing.append(f"{field} ({desc})")
-                elif value < 0.0 or value > 1.0:
-                    raise ToolOutputValidationError(
-                        f"Campo '{field}' con valor {value} fuera de rango [0.0, 1.0]"
-                    )
-            elif field == "source_chunk_ids":
-                if value is None or not isinstance(value, list):
-                    missing.append(f"{field} ({desc})")
-            elif field == "source_doc_id":
-                if not value or not isinstance(value, str):
-                    missing.append(f"{field} ({desc})")
-            else:
-                if value is None:
-                    missing.append(f"{field} ({desc})")
-
-        if missing:
-            raise ToolOutputValidationError(
-                f"Sugerencia rechazada: campos requeridos faltantes o inválidos: "
-                f"{', '.join(missing)}"
-            )
 
     def test_all_required_fields_present(self):
         args = {
@@ -450,15 +416,15 @@ class TestSuggestionRequiredFields:
             "source_chunk_ids": ["chunk_1", "chunk_2"],
         }
         # No debe lanzar excepción
-        self._validate_suggestion_fields(args)
+        validate_suggestion_data(args)
 
     def test_missing_source_doc_id(self):
         args = {
             "confidence_score": 0.95,
             "source_chunk_ids": ["chunk_1"],
         }
-        with pytest.raises(ToolOutputValidationError) as exc:
-            self._validate_suggestion_fields(args)
+        with pytest.raises(SuggestionDataValidationError) as exc:
+            validate_suggestion_data(args)
         assert "source_doc_id" in str(exc.value)
 
     def test_missing_confidence_score(self):
@@ -466,8 +432,8 @@ class TestSuggestionRequiredFields:
             "source_doc_id": "doc_123",
             "source_chunk_ids": ["chunk_1"],
         }
-        with pytest.raises(ToolOutputValidationError) as exc:
-            self._validate_suggestion_fields(args)
+        with pytest.raises(SuggestionDataValidationError) as exc:
+            validate_suggestion_data(args)
         assert "confidence_score" in str(exc.value)
 
     def test_missing_source_chunk_ids(self):
@@ -475,8 +441,8 @@ class TestSuggestionRequiredFields:
             "source_doc_id": "doc_123",
             "confidence_score": 0.95,
         }
-        with pytest.raises(ToolOutputValidationError) as exc:
-            self._validate_suggestion_fields(args)
+        with pytest.raises(SuggestionDataValidationError) as exc:
+            validate_suggestion_data(args)
         assert "source_chunk_ids" in str(exc.value)
 
     def test_confidence_score_out_of_range_high(self):
@@ -485,8 +451,8 @@ class TestSuggestionRequiredFields:
             "confidence_score": 1.5,
             "source_chunk_ids": ["chunk_1"],
         }
-        with pytest.raises(ToolOutputValidationError) as exc:
-            self._validate_suggestion_fields(args)
+        with pytest.raises(SuggestionDataValidationError) as exc:
+            validate_suggestion_data(args)
         assert "fuera de rango" in str(exc.value)
 
     def test_confidence_score_out_of_range_low(self):
@@ -495,8 +461,8 @@ class TestSuggestionRequiredFields:
             "confidence_score": -0.1,
             "source_chunk_ids": ["chunk_1"],
         }
-        with pytest.raises(ToolOutputValidationError) as exc:
-            self._validate_suggestion_fields(args)
+        with pytest.raises(SuggestionDataValidationError) as exc:
+            validate_suggestion_data(args)
         assert "fuera de rango" in str(exc.value)
 
     def test_confidence_score_wrong_type(self):
@@ -505,8 +471,8 @@ class TestSuggestionRequiredFields:
             "confidence_score": "alto",
             "source_chunk_ids": ["chunk_1"],
         }
-        with pytest.raises(ToolOutputValidationError) as exc:
-            self._validate_suggestion_fields(args)
+        with pytest.raises(SuggestionDataValidationError) as exc:
+            validate_suggestion_data(args)
         assert "confidence_score" in str(exc.value)
 
     def test_source_doc_id_empty_string(self):
@@ -515,8 +481,8 @@ class TestSuggestionRequiredFields:
             "confidence_score": 0.95,
             "source_chunk_ids": ["chunk_1"],
         }
-        with pytest.raises(ToolOutputValidationError) as exc:
-            self._validate_suggestion_fields(args)
+        with pytest.raises(SuggestionDataValidationError) as exc:
+            validate_suggestion_data(args)
         assert "source_doc_id" in str(exc.value)
 
     def test_source_chunk_ids_not_a_list(self):
@@ -525,6 +491,126 @@ class TestSuggestionRequiredFields:
             "confidence_score": 0.95,
             "source_chunk_ids": "chunk_1",
         }
-        with pytest.raises(ToolOutputValidationError) as exc:
-            self._validate_suggestion_fields(args)
+        with pytest.raises(SuggestionDataValidationError) as exc:
+            validate_suggestion_data(args)
         assert "source_chunk_ids" in str(exc.value)
+
+    def test_source_chunk_ids_empty_list(self):
+        args = {
+            "source_doc_id": "doc_123",
+            "confidence_score": 0.95,
+            "source_chunk_ids": [],
+        }
+        with pytest.raises(SuggestionDataValidationError) as exc:
+            validate_suggestion_data(args)
+        assert "source_chunk_ids" in str(exc.value)
+
+
+class TestValidateRedundancyFinding:
+    """Valida la estructura de hallazgos de redundancia."""
+
+    def test_valid_finding(self):
+        finding = {
+            "chunk_id_a": "chunk_a_1",
+            "chunk_id_b": "chunk_b_1",
+            "similarity": 0.95,
+            "confidence_score": 0.85,
+            "doc_id_a": "doc_a",
+            "doc_id_b": "doc_b",
+            "content_a_preview": "contenido del chunk a...",
+            "content_b_preview": "contenido del chunk b...",
+            "token_count_a": 100,
+            "token_count_b": 150,
+        }
+        result = validate_redundancy_finding(finding)
+        assert result is finding  # debe retornar el mismo dict
+
+    def test_missing_required_fields(self):
+        finding = {
+            "chunk_id_a": "chunk_a_1",
+            "similarity": 0.95,
+        }
+        with pytest.raises(SuggestionDataValidationError) as exc:
+            validate_redundancy_finding(finding)
+        assert "chunk_id_b" in str(exc.value)
+        assert "confidence_score" in str(exc.value)
+        assert "doc_id_a" in str(exc.value)
+
+    def test_invalid_similarity_type(self):
+        finding = {
+            "chunk_id_a": "a",
+            "chunk_id_b": "b",
+            "similarity": "alta",
+            "confidence_score": 0.8,
+            "doc_id_a": "da",
+            "doc_id_b": "db",
+            "content_a_preview": "...",
+            "content_b_preview": "...",
+        }
+        with pytest.raises(SuggestionDataValidationError) as exc:
+            validate_redundancy_finding(finding)
+        assert "similarity" in str(exc.value)
+
+
+class TestMakeSchemaStrict:
+    """Verifica que _make_schema_strict cierre correctamente los schemas."""
+
+    def test_additional_properties_added_to_objects(self):
+        """Los objetos deben tener additionalProperties=False después de strict."""
+        from app.tools.guardrails import _make_schema_strict
+
+        schema = {
+            "type": "object",
+            "properties": {
+                "name": {"type": "string"},
+            },
+        }
+        result = _make_schema_strict(schema)
+        assert result["additionalProperties"] is False
+
+    def test_nested_objects_in_items_are_closed(self):
+        """Los objetos dentro de items de arrays deben cerrarse."""
+        from app.tools.guardrails import _make_schema_strict
+
+        schema = {
+            "type": "object",
+            "properties": {
+                "items_list": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "id": {"type": "string"},
+                            "nested": {
+                                "type": "object",
+                                "properties": {"value": {"type": "string"}},
+                            },
+                        },
+                    },
+                },
+            },
+        }
+        result = _make_schema_strict(schema)
+        items_schema = result["properties"]["items_list"]["items"]
+        assert items_schema["additionalProperties"] is False
+        assert items_schema["properties"]["nested"]["additionalProperties"] is False
+
+    def test_one_of_subschemas_are_closed(self):
+        """Los subschemas dentro de oneOf deben cerrarse."""
+        from app.tools.guardrails import _make_schema_strict
+
+        schema = {
+            "oneOf": [
+                {
+                    "type": "object",
+                    "properties": {"status": {"type": "string", "enum": ["ok"]}},
+                },
+                {
+                    "type": "object",
+                    "properties": {"status": {"type": "string", "enum": ["error"]}},
+                },
+            ],
+        }
+        result = _make_schema_strict(schema)
+        for subschema in result["oneOf"]:
+            assert subschema["additionalProperties"] is False

@@ -21,9 +21,9 @@ Uso:
 
 import asyncio
 import logging
-import os
+import uuid
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_core.runnables import RunnableConfig
@@ -45,6 +45,39 @@ from app.tools.registry import get_all_tools
 logger = logging.getLogger(__name__)
 
 
+# ── Langfuse Callback Factory ────────────────────────────────────────────────
+
+
+def _create_langfuse_handler() -> Optional[Any]:
+    """Crea el callback handler de Langfuse si está configurado.
+
+    Retorna None si las credenciales no están configuradas,
+    permitiendo que el grafo funcione sin tracing.
+    """
+    pk = settings.LANGFUSE_PUBLIC_KEY.strip()
+    sk = settings.LANGFUSE_SECRET_KEY.strip()
+    if not pk or not sk:
+        logger.info("ℹ️  Langfuse no configurado — se omite tracing")
+        return None
+
+    try:
+        from langfuse.callback import CallbackHandler  # type: ignore[import-untyped]
+
+        handler = CallbackHandler(
+            secret_key=sk,
+            public_key=pk,
+            host=settings.LANGFUSE_HOST or "https://cloud.langfuse.com",
+        )
+        logger.info("✅ Langfuse CallbackHandler configurado")
+        return handler
+    except ImportError:
+        logger.warning("⚠️  langfuse no instalado — se omite tracing")
+        return None
+    except Exception as e:
+        logger.warning("⚠️  Error configurando Langfuse: %s — se omite tracing", e)
+        return None
+
+
 # ── Factory: crear el LLM según configuración ────────────────────────────────
 
 
@@ -57,7 +90,7 @@ def _create_llm():
       3. Hugging Face  (si HUGGINGFACE_MODEL está configurado)
       4. None          (modo solo pipeline RAG, sin agente)
     """
-    openai_key = os.getenv("OPENAI_API_KEY", "")
+    openai_key = (settings.OPENAI_API_KEY or "").strip()
     has_openai = bool(openai_key) and openai_key != "sk-..."
 
     if has_openai:
@@ -69,9 +102,7 @@ def _create_llm():
             temperature=0,
         )
 
-    gemini_key = getattr(settings, "GEMINI_API_KEY", None) or os.getenv(
-        "GEMINI_API_KEY", ""
-    )
+    gemini_key = (settings.GEMINI_API_KEY or "").strip()
     if gemini_key:
         try:
             from langchain_google_genai import ChatGoogleGenerativeAI
@@ -85,9 +116,7 @@ def _create_llm():
         except Exception as e:
             logger.warning("Error configurando Gemini: %s", e)
 
-    hf_model = getattr(settings, "HUGGINGFACE_MODEL", None) or os.getenv(
-        "HUGGINGFACE_MODEL", ""
-    )
+    hf_model = (settings.HUGGINGFACE_MODEL or "").strip()
     if hf_model:
         try:
             from langchain_huggingface import ChatHuggingFace, HuggingFacePipeline
@@ -122,6 +151,16 @@ def _create_llm():
 
 _LLM = _create_llm()
 _TOOLS = get_all_tools()
+
+
+def get_llm():
+    """Retorna el LLM configurado (puede ser None si no hay proveedor).
+
+    Útil para tools que quieran usar el LLM opcionalmente
+    (ej: generate_faq_entry para mejorar calidad de FAQs).
+    """
+    return _LLM
+
 
 # ── System prompt del agente ─────────────────────────────────────────────────
 
@@ -186,11 +225,12 @@ def _build_graph() -> StateGraph:
     Flujo completo:
       START → load_documents
         → (sin docs) → END
-        → (con docs) → chunk_and_embed → react_agent →
-          generate_suggestions → wait_human_approval → END
+        → (con docs) → chunk_and_embed → redundancy_detection →
+          react_agent → generate_suggestions → wait_human_approval → END
 
-    Si no hay LLM configurado, el grafo salta el nodo react_agent
-    y va directamente de chunk_and_embed a generate_suggestions.
+    Si no hay LLM configurado, el grafo salta el nodo react_agent:
+      chunk_and_embed → redundancy_detection → generate_suggestions →
+      wait_human_approval → END
     """
     builder = StateGraph(AgentState)
 
@@ -230,6 +270,19 @@ def _build_graph() -> StateGraph:
     builder.add_edge("wait_human_approval", END)
 
     return builder
+
+
+# ── Langfuse handler global (singleton) ───────────────────────────────────────
+
+_langfuse_handler: Optional[Any] = None
+
+
+def _get_langfuse_handler() -> Optional[Any]:
+    """Retorna el handler de Langfuse (singleton)."""
+    global _langfuse_handler
+    if _langfuse_handler is None:
+        _langfuse_handler = _create_langfuse_handler()
+    return _langfuse_handler
 
 
 # ── Checkpointer: AsyncSqliteSaver ───────────────────────────────────────────
@@ -295,25 +348,41 @@ async def _get_runtime_graph():
 
 async def run_curation(
     thread_id: Optional[str] = None,
+    use_langfuse: bool = True,
+    document_ids: Optional[list[str]] = None,
+    timeout_seconds: int = 300,
 ) -> dict:
     """Ejecuta el pipeline completo de curación.
 
     Args:
         thread_id: Identificador único para esta corrida.
                    Si es None, se genera uno automáticamente.
+        use_langfuse: Si incluir tracing con Langfuse (default True).
+        document_ids: Lista opcional de IDs de documentos a procesar.
+                      Si es None, load_documents_node los busca automáticamente.
+        timeout_seconds: Timeout máximo para la ejecución del grafo (default 300s).
 
     Returns:
         Estado final del grafo después de la ejecución.
     """
-    import uuid
-
     tid = thread_id or f"run-{uuid.uuid4().hex[:12]}"
     logger.info("🚀 Iniciando corrida de curación: thread_id=%s", tid)
 
-    config: RunnableConfig = {"configurable": {"thread_id": tid}}
+    if document_ids:
+        logger.info("  📋 Documentos específicos: %d proporcionados", len(document_ids))
+
+    config: RunnableConfig = {
+        "configurable": {"thread_id": tid},
+    }
+
+    # Agregar Langfuse callback si está configurado
+    langfuse_handler = _get_langfuse_handler() if use_langfuse else None
+    if langfuse_handler is not None:
+        config["callbacks"] = [langfuse_handler]
+        logger.info("  📊 Tracing con Langfuse activo")
 
     initial_state: AgentState = {
-        "document_ids": [],
+        "document_ids": document_ids or [],
         "documents_text": {},
         "chunks": [],
         "messages": [
@@ -332,9 +401,25 @@ async def run_curation(
 
     try:
         graph = await _get_runtime_graph()
-        result = await graph.ainvoke(initial_state, config)
+        result = await asyncio.wait_for(
+            graph.ainvoke(initial_state, config),
+            timeout=timeout_seconds,
+        )
         logger.info("✅ Corrida %s completada exitosamente", tid)
+        # Agregar metadata de tracing al resultado
+        if langfuse_handler is not None:
+            result["_trace_url"] = f"{settings.LANGFUSE_HOST.rstrip('/')}/trace/{tid}"
         return result
+    except asyncio.TimeoutError:
+        logger.error(
+            "❌ Corrida %s excedió el timeout de %ds",
+            tid,
+            timeout_seconds,
+        )
+        raise TimeoutError(
+            f"La corrida {tid} excedió el timeout de {timeout_seconds}s. "
+            f"Considera aumentar 'timeout_seconds' o reducir la cantidad de documentos."
+        ) from None
     except Exception as e:
         logger.exception("❌ Error en corrida %s: %s", tid, e)
         raise
@@ -349,9 +434,14 @@ def get_graph_info() -> dict:
         llm_name = "None (solo pipeline RAG)"
     else:
         llm_name = getattr(_LLM, "model_name", _LLM.__class__.__name__)
+    langfuse_handler = _get_langfuse_handler()
     return {
         "nodes": list(curation_graph.nodes.keys()),
         "checkpointer": _checkpointer_name,
         "tools": [t.name for t in _TOOLS],
         "llm": str(llm_name),
+        "tracing": {
+            "langfuse": langfuse_handler is not None,
+            "langfuse_configured": bool(settings.LANGFUSE_PUBLIC_KEY.strip()),
+        },
     }

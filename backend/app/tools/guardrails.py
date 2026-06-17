@@ -22,6 +22,22 @@ class ToolOutputValidationError(Exception):
     pass
 
 
+class SuggestionDataValidationError(Exception):
+    """Excepción lanzada cuando los datos de una sugerencia no pasan validación."""
+
+    pass
+
+
+__all__ = [
+    "ToolOutputValidationError",
+    "SuggestionDataValidationError",
+    "validate_tool_output",
+    "validate_suggestion_data",
+    "validate_redundancy_finding",
+    "TOOL_OUTPUT_SCHEMAS",
+]
+
+
 # ── JSON Schemas para cada tool ──────────────────────────────────────────────
 
 # Tool 1: search_documents
@@ -399,13 +415,23 @@ def _make_schema_strict(schema: Dict[str, Any]) -> Dict[str, Any]:
 
     Esto evita que una tool retorne campos no declarados y mantiene la validación
     en modo estricto para outputs success y error.
+
+    Recorre:
+      - Objetos (type=object) → additionalProperties=False
+      - Propiedades anidadas
+      - items (arrays)
+      - oneOf / anyOf / allOf / not
+      - if / then / else
     """
+    if not isinstance(schema, dict):
+        return schema
+
     if schema.get("type") == "object":
         schema.setdefault("additionalProperties", False)
         for subschema in schema.get("properties", {}).values():
             if isinstance(subschema, dict):
                 _make_schema_strict(subschema)
-    for key in ("items", "additionalProperties"):
+    for key in ("items", "additionalProperties", "if", "then", "else", "not"):
         subschema = schema.get(key)
         if isinstance(subschema, dict):
             _make_schema_strict(subschema)
@@ -413,6 +439,10 @@ def _make_schema_strict(schema: Dict[str, Any]) -> Dict[str, Any]:
         for subschema in schema.get(key, []):
             if isinstance(subschema, dict):
                 _make_schema_strict(subschema)
+    # prefixItems (draft 2020-12, usado por algunos generadores)
+    for subschema in schema.get("prefixItems", []):
+        if isinstance(subschema, dict):
+            _make_schema_strict(subschema)
     return schema
 
 
@@ -457,14 +487,120 @@ def validate_tool_output(tool_name: str, output: dict) -> dict:
     try:
         jsonschema_validate(output, schema)
     except ValidationError as e:
+        path = (
+            " → ".join(str(p) for p in e.absolute_path) if e.absolute_path else "root"
+        )
         logger.error(
-            "❌ Validación fallida para tool '%s': %s\nOutput: %s",
+            "❌ Validación fallida para tool '%s' en [%s]: %s\nOutput: %s",
             tool_name,
+            path,
             e.message,
             output,
         )
         raise ToolOutputValidationError(
-            f"Output de '{tool_name}' no pasa validación: {e.message}"
+            f"Output de '{tool_name}' no pasa validación en [{path}]: {e.message}"
         ) from e
 
     return output
+
+
+# ── Validación de sugerencias para el grafo ───────────────────────────────────
+
+
+_SUGGESTION_REQUIRED_FIELDS = {
+    "source_doc_id": "ID del documento fuente",
+    "confidence_score": "Puntaje de confianza del agente",
+    "source_chunk_ids": "Lista de IDs de chunks fuente",
+}
+
+
+def validate_suggestion_data(suggestion: dict) -> dict:
+    """Valida que un diccionario de sugerencia tenga los campos requeridos.
+
+    Esta validación se ejecuta en generate_suggestions_node ANTES de persistir
+    una sugerencia en Postgres, complementando la validación JSON schema
+    que ya ocurre dentro de la tool suggest_update.
+
+    Args:
+        suggestion: Diccionario con datos de la sugerencia.
+
+    Returns:
+        El mismo diccionario si pasa la validación.
+
+    Raises:
+        SuggestionDataValidationError: Si falta algún campo requerido o es inválido.
+    """
+    missing = []
+    for field, desc in _SUGGESTION_REQUIRED_FIELDS.items():
+        value = suggestion.get(field)
+        if field == "confidence_score":
+            if value is None or not isinstance(value, (int, float)):
+                missing.append(f"{field} ({desc})")
+            elif value < 0.0 or value > 1.0:
+                raise SuggestionDataValidationError(
+                    f"Campo '{field}' con valor {value} fuera de rango [0.0, 1.0]"
+                )
+        elif field == "source_chunk_ids":
+            if value is None or not isinstance(value, list) or not value:
+                missing.append(f"{field} ({desc})")
+        elif field == "source_doc_id":
+            if not value or not isinstance(value, str):
+                missing.append(f"{field} ({desc})")
+        else:
+            if value is None:
+                missing.append(f"{field} ({desc})")
+
+    if missing:
+        raise SuggestionDataValidationError(
+            f"Sugerencia rechazada: campos requeridos faltantes o inválidos: "
+            f"{', '.join(missing)}"
+        )
+
+    return suggestion
+
+
+# ── Validación de hallazgos de redundancia ───────────────────────────────────
+
+
+_REDUNDANCY_FINDING_REQUIRED = [
+    "chunk_id_a",
+    "chunk_id_b",
+    "similarity",
+    "confidence_score",
+    "doc_id_a",
+    "doc_id_b",
+    "content_a_preview",
+    "content_b_preview",
+]
+
+
+def validate_redundancy_finding(finding: dict) -> dict:
+    """Valida que un hallazgo de redundancia tenga la estructura correcta.
+
+    Args:
+        finding: Diccionario con datos del par redundante.
+
+    Returns:
+        El mismo diccionario si pasa la validación.
+
+    Raises:
+        SuggestionDataValidationError: Si falta algún campo requerido.
+    """
+    missing = [f for f in _REDUNDANCY_FINDING_REQUIRED if f not in finding]
+    if missing:
+        raise SuggestionDataValidationError(
+            f"Hallazgo de redundancia rechazado: campos faltantes: {', '.join(missing)}"
+        )
+
+    # Validar tipos
+    if not isinstance(finding.get("similarity"), (int, float)):
+        raise SuggestionDataValidationError(
+            f"Campo 'similarity' debe ser numérico, got {type(finding.get('similarity')).__name__}"
+        )
+    if not isinstance(finding.get("confidence_score"), (int, float)):
+        raise SuggestionDataValidationError(
+            f"Campo 'confidence_score' debe ser numérico, "
+            f"got {type(finding.get('confidence_score')).__name__}"
+        )
+
+    return finding

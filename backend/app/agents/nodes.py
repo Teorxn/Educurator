@@ -14,6 +14,7 @@ Nodos:
                          — Marca docs como listos para revisión humana
 """
 
+import asyncio
 import json
 import logging
 import uuid
@@ -21,6 +22,7 @@ from pathlib import Path
 
 from langchain_core.messages import AIMessage, ToolMessage
 from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agents.state import AgentState
 from app.config import settings
@@ -35,10 +37,58 @@ from app.models.models import (
     SuggestionType,
 )
 from app.rag.embeddings import chunk_and_embed as embed_chunks
-from app.tools.guardrails import ToolOutputValidationError
+from app.tools.guardrails import (
+    SuggestionDataValidationError,
+    ToolOutputValidationError,
+    validate_redundancy_finding,
+    validate_suggestion_data,
+)
 from app.utils.parser import parse_document
 
 logger = logging.getLogger(__name__)
+
+# ── Configuración de reintentos ────────────────────────────────────────────────
+
+_MAX_RETRIES = 3
+_RETRY_DELAY_MS = 100  # Espera inicial entre reintentos (se duplica cada vez)
+
+
+async def _run_with_retry(coro_factory, max_retries: int = _MAX_RETRIES):
+    """Ejecuta una coroutine con reintentos ante fallos transitorios.
+
+    Args:
+        coro_factory: Callable async que crea y retorna la coroutine a ejecutar.
+        max_retries: Número máximo de reintentos.
+
+    Returns:
+        Resultado de la coroutine si tiene éxito.
+
+    Raises:
+        La última excepción si se agotan los reintentos.
+    """
+    for attempt in range(1, max_retries + 1):
+        try:
+            return await coro_factory()
+        except (ConnectionError, TimeoutError) as e:
+            if attempt == max_retries:
+                logger.error(
+                    "  ❌ Se agotaron los reintentos (%d/%d): %s",
+                    attempt,
+                    max_retries,
+                    e,
+                )
+                raise
+            delay = _RETRY_DELAY_MS * (2 ** (attempt - 1)) / 1000
+            logger.warning(
+                "  ⚠️  Intento %d/%d falló por error transitorio: %s. "
+                "Reintentando en %.1fs...",
+                attempt,
+                max_retries,
+                e,
+                delay,
+            )
+            await asyncio.sleep(delay)
+
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -60,44 +110,19 @@ def _format_doc_context(state: "AgentState") -> str:
 
 
 def _validate_suggestion_fields(args: dict) -> None:
-    """Valida que los campos requeridos estén presentes en una sugerencia.
+    """Valida campos requeridos de sugerencia (wrapper para compatibilidad).
 
-    Args:
-        args: Diccionario con los argumentos de la sugerencia.
+    Delega en validate_suggestion_data() de guardrails. Convierte
+    SuggestionDataValidationError a ToolOutputValidationError para mantener
+    compatibilidad con el manejo de errores existente en generate_suggestions_node.
 
     Raises:
         ToolOutputValidationError: Si falta algún campo requerido.
     """
-    required_fields = {
-        "source_doc_id": "ID del documento fuente",
-        "confidence_score": "Puntaje de confianza del agente",
-        "source_chunk_ids": "Lista de IDs de chunks fuente",
-    }
-
-    missing = []
-    for field, desc in required_fields.items():
-        value = args.get(field)
-        if field == "confidence_score":
-            if value is None or not isinstance(value, (int, float)):
-                missing.append(f"{field} ({desc})")
-            elif value < 0.0 or value > 1.0:
-                raise ToolOutputValidationError(
-                    f"Campo '{field}' con valor {value} fuera de rango [0.0, 1.0]"
-                )
-        elif field == "source_chunk_ids":
-            if value is None or not isinstance(value, list) or not value:
-                missing.append(f"{field} ({desc})")
-        elif field == "source_doc_id":
-            if not value or not isinstance(value, str):
-                missing.append(f"{field} ({desc})")
-        else:
-            if value is None:
-                missing.append(f"{field} ({desc})")
-
-    if missing:
-        raise ToolOutputValidationError(
-            f"Sugerencia rechazada: campos requeridos faltantes o inválidos: {', '.join(missing)}"
-        )
+    try:
+        validate_suggestion_data(args)
+    except SuggestionDataValidationError as e:
+        raise ToolOutputValidationError(str(e)) from e
 
 
 # ── Nodo 1: load_documents_node ──────────────────────────────────────────────
@@ -113,9 +138,13 @@ async def load_documents_node(state: "AgentState") -> dict:
     logger.info("📂 load_documents_node — buscando documentos pendientes")
     logger.info("=" * 50)
 
+    max_docs = getattr(settings, "MAX_DOCS_PER_CURATION", 20)
+
     async with AsyncSessionLocal() as db:
         result = await db.execute(
-            select(Document).where(Document.status == DocumentStatus.needs_review)
+            select(Document)
+            .where(Document.status == DocumentStatus.needs_review)
+            .limit(max_docs)
         )
         docs = list(result.scalars().all())
 
@@ -130,11 +159,74 @@ async def load_documents_node(state: "AgentState") -> dict:
             logger.info("  → Marcando %s como 'processing'", doc.id)
 
         await db.commit()
-        logger.info("  ✅ Cargados %d documentos: %s", len(doc_ids), doc_ids)
+        logger.info(
+            "  ✅ Cargados %d documentos (límite: %d): %s",
+            len(doc_ids),
+            max_docs,
+            doc_ids,
+        )
         return {"document_ids": doc_ids, "error": None}
 
 
 # ── Nodo 2: chunk_and_embed_node ─────────────────────────────────────────────
+
+
+async def _process_single_document(
+    db: AsyncSession,
+    doc_id_str: str,
+) -> tuple[list[dict], dict[str, str], str | None]:
+    """Procesa un único documento: parsea, chunkea y embebe.
+
+    Returns:
+        Tuple (chunks, documents_text_entry, error).
+        Si hay error, chunks y documents_text_entry vienen vacíos.
+    """
+    try:
+        doc_uuid = uuid.UUID(doc_id_str)
+        result = await db.execute(select(Document).where(Document.id == doc_uuid))
+        doc = result.scalar_one_or_none()
+
+        if not doc:
+            return [], {}, f"Documento {doc_id_str} no encontrado en DB"
+
+        file_path = Path(doc.file_path)
+        if not file_path.exists():
+            return [], {}, f"Archivo no encontrado: {file_path}"
+
+        logger.info("  📄 Procesando: %s (%s)", doc.original_filename, doc.file_type)
+
+        # 1. Parsear
+        text = parse_document(str(file_path))
+        documents_text_entry = {doc_id_str: text}
+        logger.info("     Texto extraído: %d caracteres", len(text))
+
+        # 2. Chunk + embed
+        chunk_results = embed_chunks(
+            text=text,
+            doc_id=doc_id_str,
+        )
+        logger.info("     Chunks generados: %d", len(chunk_results))
+
+        # 3. Persistir chunks en Postgres
+        for c in chunk_results:
+            chunk_record = DocumentChunk(
+                document_id=doc_uuid,
+                chunk_index=c["chunk_index"],
+                content=c["text"],
+                token_count=c["token_count"],
+                chroma_id=c["chroma_id"],
+                page_number=c.get("page_number"),
+                hash=c.get("hash"),
+            )
+            db.add(chunk_record)
+
+        await db.flush()
+        logger.info("  ✅ Documento %s procesado exitosamente", doc_id_str)
+        return chunk_results, documents_text_entry, None
+
+    except Exception as e:
+        logger.error("  ❌ Error procesando documento %s: %s", doc_id_str, e)
+        return [], {}, f"{doc_id_str}: {e}"
 
 
 async def chunk_and_embed_node(state: "AgentState") -> dict:
@@ -146,6 +238,9 @@ async def chunk_and_embed_node(state: "AgentState") -> dict:
       3. Chunk + embedding vía rag/embeddings.py
       4. Persiste los chunks en document_chunks (Postgres)
       5. Almacena el texto extraído en state['documents_text']
+
+    Los documentos se procesan en paralelo usando asyncio.gather
+    para mejorar el throughput con múltiples documentos.
     """
     logger.info("=" * 50)
     logger.info("🔧 chunk_and_embed_node — procesando documentos")
@@ -161,60 +256,15 @@ async def chunk_and_embed_node(state: "AgentState") -> dict:
     errors: list[str] = []
 
     async with AsyncSessionLocal() as db:
-        for doc_id_str in doc_ids:
-            try:
-                doc_uuid = uuid.UUID(doc_id_str)
-                result = await db.execute(
-                    select(Document).where(Document.id == doc_uuid)
-                )
-                doc = result.scalar_one_or_none()
+        tasks = [_process_single_document(db, doc_id_str) for doc_id_str in doc_ids]
+        results = await asyncio.gather(*tasks)
 
-                if not doc:
-                    errors.append(f"Documento {doc_id_str} no encontrado en DB")
-                    continue
-
-                file_path = Path(doc.file_path)
-                if not file_path.exists():
-                    errors.append(f"Archivo no encontrado: {file_path}")
-                    continue
-
-                logger.info(
-                    "  📄 Procesando: %s (%s)", doc.original_filename, doc.file_type
-                )
-
-                # 1. Parsear
-                text = parse_document(str(file_path))
-                documents_text[doc_id_str] = text
-                logger.info("     Texto extraído: %d caracteres", len(text))
-
-                # 2. Chunk + embed
-                chunk_results = embed_chunks(
-                    text=text,
-                    doc_id=doc_id_str,
-                )
-                all_chunks.extend(chunk_results)
-                logger.info("     Chunks generados: %d", len(chunk_results))
-
-                # 3. Persistir chunks en Postgres
-                for c in chunk_results:
-                    chunk_record = DocumentChunk(
-                        document_id=doc_uuid,
-                        chunk_index=c["chunk_index"],
-                        content=c["text"],
-                        token_count=c["token_count"],
-                        chroma_id=c["chroma_id"],
-                        page_number=c.get("page_number"),
-                        hash=c.get("hash"),
-                    )
-                    db.add(chunk_record)
-
-                # 4. Actualizar timestamp
-                await db.flush()
-                logger.info("  ✅ Documento %s procesado exitosamente", doc_id_str)
-
-            except Exception as e:
-                logger.error("  ❌ Error procesando documento %s: %s", doc_id_str, e)
-                errors.append(f"{doc_id_str}: {e}")
+        for chunks, text_entry, error in results:
+            if error:
+                errors.append(error)
+            else:
+                all_chunks.extend(chunks)
+                documents_text.update(text_entry)
 
         await db.commit()
 
@@ -267,20 +317,32 @@ async def redundancy_detection_node(state: "AgentState") -> dict:
         all_findings: list[dict] = []
         for report in reports:
             for pair in report.redundant_pairs:
-                all_findings.append(
-                    {
-                        "chunk_id_a": pair.chunk_id_a,
-                        "chunk_id_b": pair.chunk_id_b,
-                        "similarity": pair.similarity,
-                        "confidence_score": pair.confidence_score,
-                        "doc_id_a": pair.doc_id_a,
-                        "doc_id_b": pair.doc_id_b,
-                    }
-                )
+                finding = {
+                    "chunk_id_a": pair.chunk_id_a,
+                    "chunk_id_b": pair.chunk_id_b,
+                    "similarity": pair.similarity,
+                    "confidence_score": pair.confidence_score,
+                    "doc_id_a": pair.doc_id_a,
+                    "doc_id_b": pair.doc_id_b,
+                    "content_a_preview": pair.content_a_preview,
+                    "content_b_preview": pair.content_b_preview,
+                    "token_count_a": pair.token_count_a,
+                    "token_count_b": pair.token_count_b,
+                }
+                # Validar contra schema estricto antes de agregar al estado
+                try:
+                    validate_redundancy_finding(finding)
+                    all_findings.append(finding)
+                except SuggestionDataValidationError as e:
+                    logger.warning(
+                        "  ⚠️  Hallazgo de redundancia inválido omitido: %s",
+                        e,
+                    )
 
         logger.info(
-            "  ✅ Redundancia: %d pares únicos encontrados",
+            "  ✅ Redundancia: %d pares válidos de %d totales",
             len(all_findings),
+            sum(len(r.redundant_pairs) for r in reports),
         )
         return {"redundancy_findings": all_findings}
 
@@ -404,13 +466,24 @@ async def generate_suggestions_node(state: "AgentState") -> dict:
                     f"(similitud: {similarity:.2f}). "
                     f"Se recomienda consolidar para evitar duplicidad."
                 )
+                content_a_preview = finding.get("content_a_preview", "")
+                content_b_preview = finding.get("content_b_preview", "")
+                token_count_a = finding.get("token_count_a", 0)
+                token_count_b = finding.get("token_count_b", 0)
+
                 reasoning = (
                     f"Detección automática de redundancia:\n"
                     f"- Chunk A: {chunk_id_a} (documento: {doc_id_a})\n"
                     f"- Chunk B: {chunk_id_b} (documento: {doc_id_b})\n"
                     f"- Similitud coseno: {similarity:.4f}\n"
+                    f"- Confidence score: {confidence:.4f}\n"
                     f"- Threshold usado: {settings.REDUNDANCY_THRESHOLD}\n"
+                    f"- Tokens chunk A: {token_count_a} | Tokens chunk B: {token_count_b}\n"
                 )
+                if content_a_preview:
+                    reasoning += f'- Preview A: "{content_a_preview[:150]}..."\n'
+                if content_b_preview:
+                    reasoning += f'- Preview B: "{content_b_preview[:150]}..."\n'
 
                 suggestion = Suggestion(
                     document_id=doc_uuid,

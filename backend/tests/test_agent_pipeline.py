@@ -13,6 +13,7 @@ Requisitos:
   pytest-mock
 """
 
+import asyncio
 import json
 import uuid
 from datetime import datetime, timezone
@@ -32,13 +33,11 @@ from app.agents.state import AgentState
 from app.config import settings
 from app.models.models import (
     Document,
-    DocumentChunk,
     DocumentHistory,
     DocumentStatus,
     Suggestion,
     SuggestionStatus,
     SuggestionType,
-    User,
 )
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -151,9 +150,15 @@ def agent_state_empty() -> AgentState:
 @pytest.fixture
 def agent_state_with_docs(agent_state_empty) -> AgentState:
     """Estado con documentos pendientes."""
-    state = dict(agent_state_empty)
-    state["document_ids"] = [str(uuid.uuid4()), str(uuid.uuid4())]
-    return state
+    return AgentState(
+        document_ids=[str(uuid.uuid4()), str(uuid.uuid4())],
+        documents_text={},
+        chunks=[],
+        messages=[],
+        suggestions=[],
+        redundancy_findings=[],
+        error=None,
+    )
 
 
 # =============================================================================
@@ -601,7 +606,7 @@ class TestWaitHumanApprovalNode:
             "redundancy_findings": [],
             "error": None,
         }
-        result = await wait_human_approval_node(state)
+        await wait_human_approval_node(state)
 
         # Verificar que los documentos cambiaron a needs_review
         for doc in docs:
@@ -631,13 +636,9 @@ class TestFullPipeline:
     @patch("app.agents.graph._get_runtime_graph")
     async def test_full_pipeline_execution(self, mock_get_graph):
         """El pipeline completo debe ejecutarse sin errores y retornar estado."""
+
         # Configurar un grafo mock que ejecuta los nodos reales
         # pero con dependencias externas mockeadas
-        from langgraph.graph import StateGraph
-
-        # Crear grafo mínimo para prueba
-        builder = StateGraph(AgentState)
-
         @patch("app.agents.nodes.AsyncSessionLocal")
         async def mock_load(state, mock_session):
             return {"document_ids": [], "error": None}
@@ -827,6 +828,255 @@ class TestDocumentStateTransitions:
         expected = {"redundancy", "conflict", "faq", "update"}
         actual = {s.value for s in SuggestionType}
         assert actual == expected
+
+
+# =============================================================================
+#  TESTS: ESTRUCTURA DEL GRAFO (CONDITIONAL EDGES)
+# =============================================================================
+
+
+class TestGraphStructure:
+    """Prueba la estructura del grafo, nodos y aristas condicionales."""
+
+    def test_graph_has_all_nodes(self):
+        """El grafo compilado debe contener todos los nodos del pipeline."""
+        from app.agents.graph import curation_graph
+
+        expected_nodes = {
+            "load_documents",
+            "chunk_and_embed",
+            "redundancy_detection",
+            "generate_suggestions",
+            "wait_human_approval",
+        }
+        assert expected_nodes.issubset(set(curation_graph.nodes.keys()))
+
+    def test_graph_conditional_edge_routing_with_docs(self):
+        """_has_documents debe retornar 'continue' cuando hay document_ids."""
+        from app.agents.graph import _has_documents
+
+        state_with_docs: AgentState = {
+            "document_ids": ["id1", "id2"],
+            "documents_text": {},
+            "chunks": [],
+            "messages": [],
+            "suggestions": [],
+            "redundancy_findings": [],
+            "error": None,
+        }
+        assert _has_documents(state_with_docs) == "continue"
+
+    def test_graph_conditional_edge_routing_without_docs(self):
+        """_has_documents debe retornar 'end' cuando no hay document_ids."""
+        from app.agents.graph import _has_documents
+
+        state_without_docs: AgentState = {
+            "document_ids": [],
+            "documents_text": {},
+            "chunks": [],
+            "messages": [],
+            "suggestions": [],
+            "redundancy_findings": [],
+            "error": None,
+        }
+        assert _has_documents(state_without_docs) == "end"
+
+    def test_graph_get_info_contains_expected_keys(self):
+        """get_graph_info debe retornar metadatos completos del grafo."""
+        from app.agents.graph import get_graph_info
+
+        info = get_graph_info()
+
+        assert "nodes" in info
+        assert "checkpointer" in info
+        assert "tools" in info
+        assert "llm" in info
+        assert "tracing" in info
+
+        # Verificar que los nodos base están presentes
+        assert "load_documents" in info["nodes"]
+        assert "chunk_and_embed" in info["nodes"]
+        assert "redundancy_detection" in info["nodes"]
+        assert "generate_suggestions" in info["nodes"]
+        assert "wait_human_approval" in info["nodes"]
+
+    def test_build_graph_structure(self):
+        """Verifica la estructura interna del grafo compilado."""
+        from app.agents.graph import _build_graph
+
+        builder = _build_graph()
+        graph = builder.compile()
+
+        # Verificar nodos del grafo compilado
+        assert "load_documents" in graph.nodes
+        assert "chunk_and_embed" in graph.nodes
+        assert "redundancy_detection" in graph.nodes
+        assert "generate_suggestions" in graph.nodes
+        assert "wait_human_approval" in graph.nodes
+
+    def test_run_curation_with_empty_doc_ids_stops_early(self):
+        """Si se pasan document_ids vacíos, no debe cargar documentos."""
+        # Esto prueba que el conditional edge funciona correctamente:
+        # load_documents_node retorna lista vacía → _has_documents → "end"
+        state: AgentState = {
+            "document_ids": [],
+            "documents_text": {},
+            "chunks": [],
+            "messages": [],
+            "suggestions": [],
+            "redundancy_findings": [],
+            "error": None,
+        }
+        from app.agents.graph import _has_documents
+
+        assert _has_documents(state) == "end"
+
+
+# =============================================================================
+#  TESTS: RETRY Y ERROR HANDLING
+# =============================================================================
+
+
+class TestRetryAndErrorHandling:
+    """Prueba el mecanismo de reintentos y manejo de errores."""
+
+    @pytest.mark.asyncio
+    async def test_run_with_retry_success_first_try(self):
+        """_run_with_retry debe retornar el resultado si la primera ejecución es exitosa."""
+        from app.agents.nodes import _run_with_retry
+
+        async def successful_coro():
+            return "ok"
+
+        result = await _run_with_retry(successful_coro, max_retries=3)
+        assert result == "ok"
+
+    @pytest.mark.asyncio
+    async def test_run_with_retry_succeeds_after_retry(self):
+        """_run_with_retry debe reintentar y eventualmente tener éxito."""
+        from app.agents.nodes import _run_with_retry
+
+        call_count = 0
+
+        async def eventually_succeeds():
+            nonlocal call_count
+            call_count += 1
+            if call_count < 3:
+                raise ConnectionError("DB temporalmente caído")
+            return "recuperado"
+
+        result = await _run_with_retry(eventually_succeeds, max_retries=3)
+        assert result == "recuperado"
+        assert call_count == 3
+
+    @pytest.mark.asyncio
+    async def test_run_with_retry_exhausts_retries(self):
+        """_run_with_retry debe fallar después de agotar los reintentos."""
+        from app.agents.nodes import _run_with_retry
+
+        async def always_fails():
+            raise ConnectionError("Error persistente")
+
+        with pytest.raises(ConnectionError):
+            await _run_with_retry(always_fails, max_retries=2)
+
+    @pytest.mark.asyncio
+    async def test_run_with_retry_non_transient_error(self):
+        """_run_with_retry NO debe reintentar errores no transitorios."""
+        from app.agents.nodes import _run_with_retry
+
+        async def value_error():
+            raise ValueError("Error de lógica")
+
+        with pytest.raises(ValueError):
+            await _run_with_retry(value_error, max_retries=3)
+
+    @pytest.mark.asyncio
+    async def test_chunk_and_embed_parallel_execution(self):
+        """chunk_and_embed_node debe procesar múltiples documentos en paralelo."""
+        from app.agents.nodes import _process_single_document, chunk_and_embed_node
+
+        # Verificar que _process_single_document existe como función helper
+        assert callable(_process_single_document)
+        # Verificar que chunk_and_embed_node usa asyncio.gather internamente
+        import inspect
+
+        source = inspect.getsource(chunk_and_embed_node)
+        assert "asyncio.gather" in source
+
+    @pytest.mark.asyncio
+    async def test_run_curation_timeout_error(self):
+        """run_curation debe lanzar TimeoutError si excede el timeout."""
+        from app.agents.graph import run_curation
+
+        # Mock _get_runtime_graph para que cuelgue
+        with patch("app.agents.graph._get_runtime_graph") as mock_get_graph:
+            mock_graph = AsyncMock()
+
+            async def slow_invoke(*args, **kwargs):
+                await asyncio.sleep(10)  # Más que el timeout
+
+            mock_graph.ainvoke = slow_invoke
+            mock_get_graph.return_value = mock_graph
+
+            with pytest.raises(TimeoutError):
+                await run_curation(
+                    thread_id="test-timeout-001",
+                    timeout_seconds=1,
+                    use_langfuse=False,
+                )
+
+
+# =============================================================================
+#  TESTS: EXPORT DE PAQUETES
+# =============================================================================
+
+
+class TestPackageExports:
+    """Verifica que los __init__.py exporten correctamente los símbolos."""
+
+    def test_agents_package_exports(self):
+        """El paquete agents debe exportar los símbolos principales."""
+        from app import agents
+
+        assert hasattr(agents, "AgentState")
+        assert hasattr(agents, "run_curation")
+        assert hasattr(agents, "get_graph_info")
+        assert hasattr(agents, "get_llm")
+        assert hasattr(agents, "load_documents_node")
+        assert hasattr(agents, "chunk_and_embed_node")
+        assert hasattr(agents, "redundancy_detection_node")
+        assert hasattr(agents, "generate_suggestions_node")
+        assert hasattr(agents, "wait_human_approval_node")
+
+    def test_tools_package_exports(self):
+        """El paquete tools debe exportar los símbolos principales."""
+        from app import tools
+
+        assert hasattr(tools, "get_all_tools")
+        assert hasattr(tools, "TOOL_MAP")
+        assert hasattr(tools, "TOOL_OUTPUT_SCHEMAS")
+        assert hasattr(tools, "ToolOutputValidationError")
+        assert hasattr(tools, "SuggestionDataValidationError")
+        assert hasattr(tools, "validate_tool_output")
+        assert hasattr(tools, "validate_suggestion_data")
+        assert hasattr(tools, "validate_redundancy_finding")
+
+    def test_rag_package_exports(self):
+        """El paquete rag debe exportar los símbolos principales."""
+        from app import rag
+
+        assert hasattr(rag, "chunk_text")
+        assert hasattr(rag, "chunk_and_embed")
+        assert hasattr(rag, "get_chroma_collection")
+        assert hasattr(rag, "get_embedding_model")
+        assert hasattr(rag, "detect_redundancy")
+        assert hasattr(rag, "detect_redundancy_bulk")
+        assert hasattr(rag, "detect_redundancy_report")
+        assert hasattr(rag, "redundancy_report_to_json")
+        assert hasattr(rag, "scan_all_redundancy")
+        assert hasattr(rag, "RedundancyResult")
+        assert hasattr(rag, "RedundancyReport")
 
 
 # =============================================================================

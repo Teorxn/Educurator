@@ -10,6 +10,7 @@ confidence_score es un valor compuesto (0.0–1.0) que refleja:
   - Consistencia del chunk (proporción de tokens informativos)
 """
 
+import asyncio
 import json
 import logging
 import math
@@ -125,7 +126,48 @@ def _compute_confidence_score(
     return round(min(max(score, 0.0), 1.0), 4)
 
 
-# ── Función principal ─────────────────────────────────────────────────────────
+# ── Helpers de async ───────────────────────────────────────────────────────────
+
+
+def _safe_get_embeddings(data, idx: int) -> Optional[list[float]]:
+    """Extrae el embedding en `idx` de `data`, retornando None si no existe."""
+    try:
+        emb = data["embeddings"][idx] if data.get("embeddings") else None
+        return emb
+    except (IndexError, TypeError):
+        return None
+
+
+def _safe_get_content(data, idx: int) -> str:
+    """Extrae el contenido en `idx` de `data`, retornando '' si no existe."""
+    try:
+        return data["documents"][idx] if data.get("documents") else ""
+    except (IndexError, TypeError):
+        return ""
+
+
+def _safe_get_metadata(data, idx: int) -> dict:
+    """Extrae metadatos en `idx` de `data`, retornando {} si no existe."""
+    try:
+        return data["metadatas"][idx] if data.get("metadatas") else {}
+    except (IndexError, TypeError):
+        return {}
+
+
+def _index_chunks_by_id(data: dict) -> dict[str, dict]:
+    """Indexa chunks de ChromaDB por ID para acceso rápido."""
+    by_id: dict[str, dict] = {}
+    for i in range(len(data.get("ids", []))):
+        cid = data["ids"][i]
+        by_id[cid] = {
+            "embedding": _safe_get_embeddings(data, i),
+            "metadata": _safe_get_metadata(data, i),
+            "content": _safe_get_content(data, i),
+        }
+    return by_id
+
+
+# ── Función pública (acorde a la especificación de la issue) ───────────────────
 
 
 async def detect_redundancy(
@@ -133,7 +175,7 @@ async def detect_redundancy(
     threshold: Optional[float] = None,
     max_pairs: int = 20,
     include_same_doc: bool = True,
-) -> RedundancyReport:
+) -> list[RedundancyResult]:
     """Detecta chunks redundantes con respecto a un chunk dado.
 
     Compara el embedding del chunk consultado contra todos los demás
@@ -148,7 +190,30 @@ async def detect_redundancy(
         include_same_doc: Si incluir chunks del mismo documento.
 
     Returns:
-        RedundancyReport con los pares redundantes encontrados.
+        Lista de RedundancyResult con los pares redundantes encontrados.
+    """
+    report = await detect_redundancy_report(
+        chunk_id=chunk_id,
+        threshold=threshold,
+        max_pairs=max_pairs,
+        include_same_doc=include_same_doc,
+    )
+    return report.redundant_pairs
+
+
+# ── Función con reporte detallado ───────────────────────────────────────────────
+
+
+async def detect_redundancy_report(
+    chunk_id: str,
+    threshold: Optional[float] = None,
+    max_pairs: int = 20,
+    include_same_doc: bool = True,
+) -> RedundancyReport:
+    """Detecta chunks redundantes y retorna un reporte completo.
+
+    Esta es la implementación interna que genera metadatos adicionales
+    (total de comparaciones, umbral usado, etc.).
     """
     from app.rag.embeddings import get_chroma_collection
 
@@ -165,8 +230,9 @@ async def detect_redundancy(
 
     collection = get_chroma_collection()
 
-    # Obtener el chunk consultado
-    query_result = collection.get(
+    # ── Obtener el chunk consultado (en thread para no bloquear el event loop) ──
+    query_result = await asyncio.to_thread(
+        collection.get,
         ids=[chunk_id],
         include=["documents", "metadatas", "embeddings"],
     )
@@ -181,12 +247,10 @@ async def detect_redundancy(
             pair_count=0,
         )
 
-    query_embedding = (
-        query_result["embeddings"][0] if query_result.get("embeddings") else None
-    )
-    query_metadata = query_result["metadatas"][0] if query_result["metadatas"] else {}
+    query_embedding = _safe_get_embeddings(query_result, 0)
+    query_metadata = _safe_get_metadata(query_result, 0)
     query_doc_id = query_metadata.get("doc_id", "")
-    query_content = query_result["documents"][0] if query_result["documents"] else ""
+    query_content = _safe_get_content(query_result, 0)
     query_token_count = query_metadata.get("token_count", 0)
 
     if query_embedding is None:
@@ -199,8 +263,9 @@ async def detect_redundancy(
             pair_count=0,
         )
 
-    # Obtener todos los chunks para comparar
-    all_chunks = collection.get(
+    # ── Obtener todos los chunks para comparar (en thread) ────────────────────
+    all_chunks = await asyncio.to_thread(
+        collection.get,
         include=["documents", "metadatas", "embeddings"],
     )
 
@@ -214,7 +279,7 @@ async def detect_redundancy(
             pair_count=0,
         )
 
-    # Comparar contra todos los chunks (excluyéndose a sí mismo)
+    # ── Comparar contra todos los chunks ──────────────────────────────────────
     redundant_pairs: list[RedundancyResult] = []
     comparisons = 0
 
@@ -226,13 +291,11 @@ async def detect_redundancy(
             continue
 
         # Saltarse chunks del mismo documento si no se permite
-        other_meta = all_chunks["metadatas"][i] if all_chunks["metadatas"] else {}
+        other_meta = _safe_get_metadata(all_chunks, i)
         if not include_same_doc and other_meta.get("doc_id", "") == query_doc_id:
             continue
 
-        other_embedding = (
-            all_chunks["embeddings"][i] if all_chunks.get("embeddings") else None
-        )
+        other_embedding = _safe_get_embeddings(all_chunks, i)
         if other_embedding is None:
             continue
 
@@ -240,9 +303,7 @@ async def detect_redundancy(
         comparisons += 1
 
         if similarity > effective_threshold:
-            other_content = (
-                all_chunks["documents"][i] if all_chunks["documents"] else ""
-            )
+            other_content = _safe_get_content(all_chunks, i)
             other_token_count = other_meta.get("token_count", 0)
 
             confidence = _compute_confidence_score(
@@ -296,9 +357,11 @@ async def detect_redundancy_bulk(
     max_pairs_per_chunk: int = 10,
     include_same_doc: bool = True,
 ) -> list[RedundancyReport]:
-    """Ejecuta detect_redundancy sobre múltiples chunks.
+    """Ejecuta detección de redundancia sobre múltiples chunks en una sola pasada.
 
-    Útil para procesar todos los chunks de un documento recién insertado.
+    A diferencia de llamar detect_redundancy() N veces, esta función obtiene
+    todos los chunks de ChromaDB una sola vez y calcula las similitudes en
+    memoria, reduciendo drásticamente las llamadas a la base de datos vectorial.
 
     Args:
         chunk_ids: Lista de IDs de chunks a evaluar.
@@ -309,47 +372,296 @@ async def detect_redundancy_bulk(
     Returns:
         Lista de RedundancyReport, uno por cada chunk consultado.
     """
+    from app.rag.embeddings import get_chroma_collection
+
+    effective_threshold = (
+        threshold if threshold is not None else settings.REDUNDANCY_THRESHOLD
+    )
     logger.info(
         "🔍 detect_redundancy_bulk: %d chunks, threshold=%.2f",
         len(chunk_ids),
-        threshold or settings.REDUNDANCY_THRESHOLD,
+        effective_threshold,
     )
 
-    results: list[RedundancyReport] = []
-    for chunk_id in chunk_ids:
-        report = await detect_redundancy(
-            chunk_id=chunk_id,
-            threshold=threshold,
-            max_pairs=max_pairs_per_chunk,
-            include_same_doc=include_same_doc,
-        )
-        if report.pair_count > 0:
-            results.append(report)
+    if not chunk_ids:
+        return []
 
-    # Consolidar: eliminar pares duplicados (A-B y B-A)
+    collection = get_chroma_collection()
+
+    # 1. Obtener SOLO los chunks consultados (en thread para no bloquear)
+    query_data = await asyncio.to_thread(
+        collection.get,
+        ids=chunk_ids,
+        include=["documents", "metadatas", "embeddings"],
+    )
+
+    if not query_data["ids"]:
+        logger.info("  ℹ️  Ningún chunk consultado encontrado en ChromaDB")
+        return []
+
+    # 2. Obtener TODOS los otros chunks (una sola llamada, en thread)
+    all_data = await asyncio.to_thread(
+        collection.get,
+        include=["documents", "metadatas", "embeddings"],
+    )
+
+    if not all_data["ids"]:
+        logger.info("  ℹ️  No hay otros chunks en la colección")
+        return []
+
+    # 3. Indexar todos los chunks por ID para acceso rápido
+    all_by_id = _index_chunks_by_id(all_data)
+
+    # 4. Para cada chunk consultado, comparar contra todos
     seen_pairs: set[frozenset[str]] = set()
     consolidated: list[RedundancyReport] = []
-    for report in results:
-        unique_pairs: list[RedundancyResult] = []
-        for pair in report.redundant_pairs:
-            pair_key = frozenset([pair.chunk_id_a, pair.chunk_id_b])
-            if pair_key not in seen_pairs:
+
+    for chunk_id in chunk_ids:
+        if chunk_id not in all_by_id:
+            logger.warning("  ⚠️  Chunk %s no encontrado en ChromaDB", chunk_id)
+            continue
+
+        query_info = all_by_id[chunk_id]
+        query_embedding = query_info["embedding"]
+        query_metadata = query_info["metadata"]
+        query_doc_id = query_metadata.get("doc_id", "")
+        query_content = query_info["content"]
+        query_token_count = query_metadata.get("token_count", 0)
+
+        if query_embedding is None:
+            logger.warning("  ⚠️  Chunk %s no tiene embedding", chunk_id)
+            continue
+
+        pairs: list[RedundancyResult] = []
+        comparisons = 0
+
+        for other_id, other_info in all_by_id.items():
+            # Saltarse a sí mismo
+            if other_id == chunk_id:
+                continue
+
+            other_meta = other_info["metadata"]
+
+            # Saltarse chunks del mismo documento si no se permite
+            if not include_same_doc and other_meta.get("doc_id", "") == query_doc_id:
+                continue
+
+            other_embedding = other_info["embedding"]
+            if other_embedding is None:
+                continue
+
+            similarity = _cosine_similarity(query_embedding, other_embedding)
+            comparisons += 1
+
+            if similarity > effective_threshold:
+                other_content = other_info["content"]
+                other_token_count = other_meta.get("token_count", 0)
+
+                # Evitar duplicados (A-B y B-A)
+                pair_key = frozenset([chunk_id, other_id])
+                if pair_key in seen_pairs:
+                    continue
                 seen_pairs.add(pair_key)
-                unique_pairs.append(pair)
-        if unique_pairs:
+
+                confidence = _compute_confidence_score(
+                    similarity=similarity,
+                    token_count_a=query_token_count,
+                    token_count_b=other_token_count,
+                    content_a=query_content,
+                    content_b=other_content,
+                )
+
+                pairs.append(
+                    RedundancyResult(
+                        chunk_id_a=chunk_id,
+                        chunk_id_b=other_id,
+                        similarity=similarity,
+                        confidence_score=confidence,
+                        doc_id_a=query_doc_id,
+                        doc_id_b=other_meta.get("doc_id", ""),
+                        chunk_index_a=query_metadata.get("chunk_index", 0),
+                        chunk_index_b=other_meta.get("chunk_index", 0),
+                        content_a_preview=query_content[:200],
+                        content_b_preview=other_content[:200],
+                        token_count_a=query_token_count,
+                        token_count_b=other_token_count,
+                    )
+                )
+
+        # Ordenar por similitud descendente y limitar
+        pairs.sort(key=lambda p: p.similarity, reverse=True)
+        pairs = pairs[:max_pairs_per_chunk]
+
+        if pairs:
             consolidated.append(
                 RedundancyReport(
-                    query_chunk_id=report.query_chunk_id,
-                    threshold=report.threshold,
-                    total_comparisons=report.total_comparisons,
-                    redundant_pairs=unique_pairs,
-                    pair_count=len(unique_pairs),
+                    query_chunk_id=chunk_id,
+                    threshold=effective_threshold,
+                    total_comparisons=comparisons,
+                    redundant_pairs=pairs,
+                    pair_count=len(pairs),
                 )
             )
 
     total_pairs = sum(r.pair_count for r in consolidated)
-    logger.info("  ✅ Bulk completo: %d pares únicos encontrados", total_pairs)
+    logger.info(
+        "  ✅ Bulk optimizado: %d pares únicos en %d chunks",
+        total_pairs,
+        len(chunk_ids),
+    )
     return consolidated
+
+
+async def scan_all_redundancy(
+    threshold: Optional[float] = None,
+    max_pairs: int = 50,
+    include_same_doc: bool = False,
+) -> list[RedundancyResult]:
+    """Escanea toda la colección ChromaDB buscando pares redundantes.
+
+    A diferencia de detect_redundancy() que busca redundancia contra UN chunk,
+    esta función compara todos los chunks contra todos y retorna los pares
+    más redundantes de toda la colección.
+
+    Útil para:
+      - Ejecutar como mantenimiento periódico
+      - Detectar redundancia entre documentos existentes al subir uno nuevo
+      - Obtener una vista global del estado de redundancia
+
+    Args:
+        threshold: Umbral de similitud (por defecto REDUNDANCY_THRESHOLD).
+        max_pairs: Máximo de pares a retornar (ordenados por similitud descendente).
+        include_same_doc: Si incluir redundancia intra-documento.
+
+    Returns:
+        Lista global de RedundancyResult, ordenados por similitud descendente.
+    """
+    from app.rag.embeddings import get_chroma_collection
+
+    effective_threshold = (
+        threshold if threshold is not None else settings.REDUNDANCY_THRESHOLD
+    )
+    logger.info(
+        "🔍 scan_all_redundancy(threshold=%.2f, max_pairs=%d, same_doc=%s)",
+        effective_threshold,
+        max_pairs,
+        include_same_doc,
+    )
+
+    collection = get_chroma_collection()
+
+    # Obtener todos los chunks (en thread para no bloquear)
+    all_data = await asyncio.to_thread(
+        collection.get,
+        include=["documents", "metadatas", "embeddings"],
+    )
+
+    if not all_data["ids"] or len(all_data["ids"]) < 2:
+        logger.info("  ℹ️  No hay suficientes chunks para comparar")
+        return []
+
+    # Indexar por ID para acceso rápido
+    all_by_id = _index_chunks_by_id(all_data)
+    ids_list = list(all_by_id.keys())
+    total_chunks = len(ids_list)
+    max_comparisons = settings.MAX_REDUNDANCY_COMPARISONS
+
+    if total_chunks > max_comparisons:
+        logger.warning(
+            "  ⚠️  Colección grande (%d chunks). Limitando a %d comparaciones. "
+            "Ajusta MAX_REDUNDANCY_COMPARISONS si es necesario.",
+            total_chunks,
+            max_comparisons,
+        )
+
+    seen_pairs: set[frozenset[str]] = set()
+    all_pairs: list[RedundancyResult] = []
+    total_comparisons = 0
+
+    for i in range(total_chunks):
+        if total_comparisons >= max_comparisons:
+            logger.info(
+                "  ⚠️  Límite de %d comparaciones alcanzado. "
+                "Procesando resultados parciales.",
+                max_comparisons,
+            )
+            break
+
+        chunk_id_a = ids_list[i]
+        info_a = all_by_id[chunk_id_a]
+        emb_a = info_a["embedding"]
+        meta_a = info_a["metadata"]
+        doc_id_a = meta_a.get("doc_id", "")
+        content_a = info_a["content"]
+        token_a = meta_a.get("token_count", 0)
+
+        if emb_a is None:
+            continue
+
+        for j in range(i + 1, total_chunks):
+            if total_comparisons >= max_comparisons:
+                break
+
+            chunk_id_b = ids_list[j]
+            info_b = all_by_id[chunk_id_b]
+            emb_b = info_b["embedding"]
+            meta_b = info_b["metadata"]
+
+            if emb_b is None:
+                continue
+
+            # Excluir mismo documento si no se permite
+            if not include_same_doc and meta_b.get("doc_id", "") == doc_id_a:
+                continue
+
+            total_comparisons += 1
+            similarity = _cosine_similarity(emb_a, emb_b)
+
+            if similarity > effective_threshold:
+                pair_key = frozenset([chunk_id_a, chunk_id_b])
+                if pair_key in seen_pairs:
+                    continue
+                seen_pairs.add(pair_key)
+
+                content_b = info_b["content"]
+                token_b = meta_b.get("token_count", 0)
+
+                confidence = _compute_confidence_score(
+                    similarity=similarity,
+                    token_count_a=token_a,
+                    token_count_b=token_b,
+                    content_a=content_a,
+                    content_b=content_b,
+                )
+
+                all_pairs.append(
+                    RedundancyResult(
+                        chunk_id_a=chunk_id_a,
+                        chunk_id_b=chunk_id_b,
+                        similarity=similarity,
+                        confidence_score=confidence,
+                        doc_id_a=doc_id_a,
+                        doc_id_b=meta_b.get("doc_id", ""),
+                        chunk_index_a=meta_a.get("chunk_index", 0),
+                        chunk_index_b=meta_b.get("chunk_index", 0),
+                        content_a_preview=content_a[:200],
+                        content_b_preview=content_b[:200],
+                        token_count_a=token_a,
+                        token_count_b=token_b,
+                    )
+                )
+
+    # Ordenar por similitud descendente y limitar
+    all_pairs.sort(key=lambda p: p.similarity, reverse=True)
+    all_pairs = all_pairs[:max_pairs]
+
+    logger.info(
+        "  ✅ Scan completo: %d pares encontrados en %d comparaciones (threshold=%.2f)",
+        len(all_pairs),
+        total_comparisons,
+        effective_threshold,
+    )
+    return all_pairs
 
 
 def redundancy_report_to_json(report: RedundancyReport) -> str:

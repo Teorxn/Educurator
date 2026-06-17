@@ -28,3 +28,5 @@ langchain-google-genai~=2.1.0
 langchain-core~=1.4.0
 jsonschema==4.23.0
 chardet==5.2.0
+langfuse~=2.57.0
+langchain-langfuse~=0.1.0
