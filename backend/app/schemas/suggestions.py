@@ -6,6 +6,16 @@ from pydantic import BaseModel, Field
 from app.models.models import SuggestionStatus, SuggestionType
 
 
+class ChunkEvidenceItem(BaseModel):
+    """Evidencia de un chunk individual mostrada al revisor."""
+
+    chunk_id: str
+    content: str
+    chunk_index: int
+    token_count: int
+    page_number: int | None = None
+
+
 class SuggestionResponse(BaseModel):
     id: uuid.UUID
     document_id: uuid.UUID
@@ -16,11 +26,13 @@ class SuggestionResponse(BaseModel):
     confidence_score: float
     source_chunk_ids: list
     source_doc_id: str
+    source_type: str | None = None
     review_reason: str | None
     reviewed_by: uuid.UUID | None
     reviewed_at: datetime | None
     created_at: datetime
     document_name: str | None = None
+    source_chunks: list[ChunkEvidenceItem] = []
 
     model_config = {"from_attributes": True}
 

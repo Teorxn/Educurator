@@ -1,35 +1,43 @@
 # Educurator Backend
 
-Guia rapida para levantar el backend con Docker, correr migraciones y seed.
+Guía rápida para levantar el stack con Docker, correr migraciones y seed.
 
 ## Requisitos
 
 - Docker Desktop (Windows/Mac) o Docker Engine (Linux)
-- Python 3.11 (solo si ejecutas en local sin Docker)
+- Python 3.11+ (solo si ejecutas en local sin Docker)
 
-## Configuracion inicial
+## Configuración inicial
 
-1. Crea el archivo de entorno:
+Crea el archivo de entorno desde la **raíz del proyecto**:
 
 ```bash
+cd ..  # si estás en backend/
 cp .env.example .env
 ```
 
-2. Verifica estos valores en `.env`:
+Edita `.env` con los valores necesarios (ver `.env.example` como referencia).
+
+## Levantar servicios con Docker
 
 ```bash
-DATABASE_URL=postgresql+asyncpg://postgres:postgres@db:5432/educurator
-ALLOWED_ORIGINS=["http://localhost:5173","http://localhost:3000"]
-```
-
-## Levantar servicios
-
-```bash
-docker compose up -d --build
+# Desde el directorio backend/
+docker compose up -d db chromadb
 docker compose ps
 ```
 
+Esto levanta PostgreSQL (puerto `5434` del host) y ChromaDB usando las
+definiciones del `docker-compose.yml` raíz sin duplicación.
+
+> Si quieres el stack completo (api + langfuse incluidos), usa el compose raíz:
+> ```bash
+> cd ..
+> docker compose up -d
+> ```
+
 ## Migraciones
+
+Con el stack completo levantado (api incluido):
 
 ```bash
 docker compose exec api alembic upgrade head
@@ -49,37 +57,32 @@ curl http://localhost:8000/health
 
 ## Notas
 
-- Postgres se expone en el host como `5434:5432` para evitar choques con instalaciones locales.
+- Postgres se expone en el host como `5434:5432` para evitar choques con instalaciones locales de PostgreSQL.
 - Si quieres reiniciar todo desde cero (datos incluidos):
 
 ```bash
 docker compose down -v
 ```
 
-## Ejecucion local (sin Docker)
+---
 
-Usa esta opcion si quieres correr el API desde tu maquina y solo usar Docker para la base de datos.
+## Ejecución local (sin Docker)
+
+Usa esta opción si quieres correr el API desde tu máquina y solo usar Docker para la base de datos.
 
 ### 1) Entorno virtual
 
-Windows (PowerShell):
-
 ```bash
 python -m venv .venv
+```
+
+Windows (PowerShell):
+```powershell
 .\.venv\Scripts\activate
 ```
 
-Windows (Git Bash):
-
-```bash
-python -m venv .venv
-source .venv/Scripts/activate
-```
-
 Linux/Mac:
-
 ```bash
-python3 -m venv .venv
 source .venv/bin/activate
 ```
 
@@ -91,7 +94,7 @@ pip install -r requirements.txt
 
 ### 3) Ajustar `.env` para local
 
-Si la base esta en Docker, usa el puerto expuesto en el host:
+Si la base está en Docker, usa el puerto expuesto en el host:
 
 ```bash
 DATABASE_URL=postgresql+asyncpg://postgres:postgres@localhost:5434/educurator

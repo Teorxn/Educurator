@@ -12,7 +12,7 @@ Los docentes suben documentos (PDF, DOCX, TXT), el sistema los procesa con un pi
 | Backend | FastAPI + SQLAlchemy 2.0 (async) + Alembic |
 | Base de datos | PostgreSQL 16 |
 | Vector store | ChromaDB |
-| Embeddings | OpenAI `text-embedding-3-small` |
+| Embeddings | sentence-transformers (Hugging Face local) |
 | Agente (pendiente) | LangGraph |
 | Observabilidad | Langfuse |
 | Frontend | React 19 + Vite + Tailwind CSS 4 |
@@ -54,7 +54,7 @@ Educurator/
 - [Docker Desktop](https://www.docker.com/products/docker-desktop/) (recomendado)
 - Node.js 20+ (solo para correr el frontend en modo dev)
 - Python 3.12+ (solo para desarrollo local sin Docker)
-- Cuenta OpenAI con API key (para embeddings)
+- (Opcional) API key de OpenAI, Google Gemini, o modelo local de Hugging Face
 
 ---
 
@@ -64,19 +64,28 @@ Educurator/
 
 ```bash
 git clone https://github.com/Teorxn/Educurator.git
-cd Educurator/backend
+cd Educurator
 cp .env.example .env
 ```
 
-Editar `backend/.env` y completar:
+Editar `.env` (raíz del proyecto) y completar:
 
 ```env
 DATABASE_URL=postgresql+asyncpg://postgres:postgres@db:5432/educurator
 SECRET_KEY=cambia-esto-por-un-secreto-largo
-OPENAI_API_KEY=sk-...          # necesario para embeddings
 ALLOWED_ORIGINS=["http://localhost:5173"]
-UPLOAD_DIR=data/uploads
+
+# Langfuse (requerido por docker-compose)
+LANGFUSE_SECRET=cambia-esto-por-un-secreto-unico
+LANGFUSE_SALT=cambia-esto-por-un-salt-unico
+
+# LLM — elige SOLO una:
+# OPENAI_API_KEY=sk-...
+# GEMINI_API_KEY=tu-api-key-de-gemini
+# HUGGINGFACE_MODEL=TinyLlama/TinyLlama-1.1B-Chat-v1.0
 ```
+
+> **Nota:** Para desarrollo local sin Docker, el `.env` va en `backend/` (ver Opción B).
 
 ### 2. Levantar el stack
 
@@ -95,13 +104,20 @@ Servicios que levanta:
 | ChromaDB | http://localhost:8001 |
 | Langfuse | http://localhost:3000 |
 
-### 3. Correr las migraciones
+### 3. Verificar healthchecks
+
+```bash
+docker compose ps
+# Todos los servicios deben mostrar "healthy"
+```
+
+### 4. Correr las migraciones
 
 ```bash
 docker-compose exec api alembic upgrade head
 ```
 
-### 4. Crear usuarios iniciales (seed)
+### 5. Crear usuarios iniciales (seed)
 
 ```bash
 docker-compose exec api python seed.py
@@ -159,17 +175,17 @@ El frontend corre en http://localhost:5173 y apunta al backend en `http://localh
 
 ---
 
-## Opción C — Docker solo para la base de datos (desarrollo mixto)
+## Opción C — Docker solo para infraestructura (desarrollo mixto)
 
-Útil para desarrollar backend localmente con Postgres en Docker:
+Útil para desarrollar el backend localmente con Postgres y ChromaDB en Docker:
 
 ```bash
 cd backend
-docker-compose up -d db chromadb
+docker compose up -d db chromadb
 ```
 
 Postgres queda en `localhost:5434` (puerto alternativo para no colisionar con instalaciones locales).  
-Ajustar `backend/.env`:
+Ajustar tu `.env`:
 
 ```env
 DATABASE_URL=postgresql+asyncpg://postgres:postgres@localhost:5434/educurator
@@ -290,8 +306,10 @@ ALLOWED_ORIGINS=["http://localhost:5173","http://localhost:3000"]
 UPLOAD_DIR=data/uploads
 MAX_FILE_SIZE=52428800        # 50 MB
 
-# OpenAI (requerido para embeddings)
-OPENAI_API_KEY=sk-...
+# LLM — elige SOLO una:
+# OPENAI_API_KEY=sk-...
+# GEMINI_API_KEY=tu-api-key-de-gemini
+# HUGGINGFACE_MODEL=TinyLlama/TinyLlama-1.1B-Chat-v1.0
 
 # Langfuse (Sprint 2)
 # LANGFUSE_PUBLIC_KEY=

@@ -1,15 +1,23 @@
-import { NavLink } from 'react-router-dom'
-import { Upload, FileText, CheckSquare, BarChart3, X } from 'lucide-react'
+import { NavLink } from "react-router-dom";
+import {
+  Upload,
+  FileText,
+  CheckSquare,
+  BarChart3,
+  BookOpen,
+  X,
+} from "lucide-react";
 
 const NAV = [
-  { to: '/upload',    icon: Upload,      label: 'Subir documento' },
-  { to: '/docs',      icon: FileText,    label: 'Documentos' },
-  { to: '/review',    icon: CheckSquare, label: 'Revisión' },
-  { to: '/analytics', icon: BarChart3,   label: 'Analytics' },
-]
+  { to: "/upload", icon: Upload, label: "Subir documento" },
+  { to: "/docs", icon: FileText, label: "Documentos" },
+  { to: "/reference-docs", icon: BookOpen, label: "Documentos de referencia" },
+  { to: "/review", icon: CheckSquare, label: "Revisión" },
+  { to: "/analytics", icon: BarChart3, label: "Analytics" },
+];
 
 interface SidebarProps {
-  onClose?: () => void
+  onClose?: () => void;
 }
 
 export default function Sidebar({ onClose }: SidebarProps) {
@@ -19,11 +27,19 @@ export default function Sidebar({ onClose }: SidebarProps) {
       <div className="flex items-center justify-between px-5 py-5 border-b border-slate-700/60">
         <div className="flex items-center gap-2.5">
           <div className="w-8 h-8 bg-slate-700 rounded-lg flex items-center justify-center shadow-sm">
-            <img src="/Softserve.png" alt="SoftServe" className="w-5 h-5 object-contain" />
+            <img
+              src="/Softserve.png"
+              alt="SoftServe"
+              className="w-5 h-5 object-contain"
+            />
           </div>
           <div>
-            <p className="text-white font-semibold text-sm leading-none">EduCurator AI</p>
-            <p className="text-slate-500 text-xs mt-0.5">Curación de conocimiento</p>
+            <p className="text-white font-semibold text-sm leading-none">
+              EduCurator AI
+            </p>
+            <p className="text-slate-500 text-xs mt-0.5">
+              Curación de conocimiento
+            </p>
           </div>
         </div>
         {/* Close button only on mobile */}
@@ -48,8 +64,8 @@ export default function Sidebar({ onClose }: SidebarProps) {
             className={({ isActive }) =>
               `flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors ${
                 isActive
-                  ? 'bg-violet-600 text-white shadow-sm'
-                  : 'text-slate-400 hover:text-slate-100 hover:bg-slate-800'
+                  ? "bg-violet-600 text-white shadow-sm"
+                  : "text-slate-400 hover:text-slate-100 hover:bg-slate-800"
               }`
             }
           >
@@ -64,5 +80,5 @@ export default function Sidebar({ onClose }: SidebarProps) {
         <p className="text-xs text-slate-600">SoftServe University · 2025</p>
       </div>
     </aside>
-  )
+  );
 }

@@ -1,27 +1,28 @@
-import { useNavigate, useLocation } from 'react-router-dom'
-import { LogOut, User, Menu } from 'lucide-react'
+import { useNavigate, useLocation } from "react-router-dom";
+import { LogOut, User, Menu } from "lucide-react";
 
 const TITLES: Record<string, string> = {
-  '/upload':    'Subir documento',
-  '/docs':      'Documentos',
-  '/review':    'Revisión de sugerencias',
-  '/logs':      'Logs del agente',
-  '/analytics': 'Analytics',
-}
+  "/upload": "Subir documento",
+  "/docs": "Documentos",
+  "/review": "Revisión de sugerencias",
+  "/logs": "Logs del agente",
+  "/analytics": "Analytics",
+  "/reference-docs": "Documentos de referencia",
+};
 
 interface HeaderProps {
-  onMenuClick: () => void
+  onMenuClick: () => void;
 }
 
 export default function Header({ onMenuClick }: HeaderProps) {
-  const navigate = useNavigate()
-  const { pathname } = useLocation()
-  const title = TITLES[pathname] ?? 'Dashboard'
+  const navigate = useNavigate();
+  const { pathname } = useLocation();
+  const title = TITLES[pathname] ?? "Dashboard";
 
   const handleLogout = () => {
-    localStorage.removeItem('access_token')
-    navigate('/login')
-  }
+    localStorage.removeItem("access_token");
+    navigate("/login");
+  };
 
   return (
     <header className="h-14 border-b border-gray-200 bg-white flex items-center justify-between px-4 sm:px-6 shrink-0">
@@ -53,5 +54,5 @@ export default function Header({ onMenuClick }: HeaderProps) {
         </button>
       </div>
     </header>
-  )
+  );
 }
