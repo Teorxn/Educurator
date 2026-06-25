@@ -18,6 +18,7 @@ from app.api.dependencies import get_current_user, require_role
 from app.database import get_db
 from app.models.models import (
     Document,
+    DocumentCategory,
     DocumentHistory,
     DocumentStatus,
     FeedbackPattern,
@@ -85,6 +86,19 @@ async def list_suggestions(
         ).scalar_one_or_none()
         resp = SuggestionResponse.model_validate(s)
         resp.document_name = doc.filename if doc else None
+
+        # #61 — Determinar source_type (curated/reference) según el documento origen
+        if s.source_doc_id:
+            try:
+                source_uuid = uuid.UUID(s.source_doc_id)
+                source_doc = await db.execute(
+                    select(Document).where(Document.id == source_uuid)
+                )
+                src = source_doc.scalar_one_or_none()
+                if src:
+                    resp.source_type = src.category.value
+            except (ValueError, Exception):
+                pass
 
         # #33 — Enriquecer con evidencia de chunks (original fragment)
         if s.source_chunk_ids:

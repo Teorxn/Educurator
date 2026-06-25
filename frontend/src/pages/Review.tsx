@@ -241,6 +241,15 @@ export default function Review() {
                           {s.document_name}
                         </span>
                       )}
+                      {/* #61 — Badge de fuente de referencia */}
+                      {s.source_type === "reference" && (
+                        <span
+                          className="inline-flex items-center gap-1 text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-800 cursor-help"
+                          title="Esta sugerencia usa un documento de referencia como fuente"
+                        >
+                          📚 Fuente: Referencia
+                        </span>
+                      )}
                       <span className="text-xs text-gray-400">
                         {fmtDate(s.created_at)}
                       </span>

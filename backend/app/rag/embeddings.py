@@ -65,6 +65,7 @@ def chunk_and_embed(
     doc_id: str,
     chunk_index: int = 0,
     page_number: Optional[int] = None,
+    category: str = "curated",
 ) -> list[dict[str, Any]]:
     """Chunkea el texto y genera embeddings locales.
 
@@ -76,9 +77,10 @@ def chunk_and_embed(
         doc_id: ID del documento en Postgres.
         chunk_index: Índice inicial para numerar chunks.
         page_number: Número de página (opcional).
+        category: Categoría del documento ('curated' o 'reference').
 
     Returns:
-        Lista de dicts con chroma_id, chunk_index, text, token_count, hash, page_number.
+        Lista de dicts con chroma_id, chunk_index, text, token_count, hash, page_number, category.
     """
     from app.rag.chunker import chunk_text
 
@@ -115,6 +117,7 @@ def chunk_and_embed(
                         "page_number": page_number or 0,
                         "hash": chunk_hash,
                         "token_count": chunk["token_count"],
+                        "category": category,
                     }
                 ],
             )
@@ -128,6 +131,7 @@ def chunk_and_embed(
                 "token_count": chunk["token_count"],
                 "hash": chunk_hash,
                 "page_number": page_number or 0,
+                "category": category,
             }
         )
 

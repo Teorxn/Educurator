@@ -29,6 +29,7 @@ from app.config import settings
 from app.database import AsyncSessionLocal
 from app.models.models import (
     Document,
+    DocumentCategory,
     DocumentChunk,
     DocumentHistory,
     DocumentStatus,
@@ -154,8 +155,10 @@ def _validate_suggestion_fields(args: dict) -> None:
 
 
 async def load_documents_node(state: "AgentState") -> dict:
-    """Carga documentos con status needs_review desde Postgres.
+    """Carga documentos curated con status needs_review desde Postgres.
 
+    Solo procesa documentos con category=curated (los reference se
+    procesan por separado vía process_reference_documents).
     Marca los documentos como 'processing' para evitar
     que otro worker los procese concurrentemente.
     """
@@ -169,6 +172,7 @@ async def load_documents_node(state: "AgentState") -> dict:
         result = await db.execute(
             select(Document)
             .where(Document.status == DocumentStatus.needs_review)
+            .where(Document.category == DocumentCategory.curated)
             .limit(max_docs)
         )
         docs = list(result.scalars().all())
@@ -226,9 +230,13 @@ async def _process_single_document(
         logger.info("     Texto extraído: %d caracteres", len(text))
 
         # 2. Chunk + embed
+        # Determinar categoría para metadata en ChromaDB
+        doc_category = doc.category.value if hasattr(doc, "category") else "curated"
+
         chunk_results = embed_chunks(
             text=text,
             doc_id=doc_id_str,
+            category=doc_category,
         )
         logger.info("     Chunks generados: %d", len(chunk_results))
 

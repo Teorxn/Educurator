@@ -52,6 +52,10 @@ class SearchInput(StrictToolInput):
         le=20,
         description="Número de resultados a retornar (1-20)",
     )
+    category_filter: str = Field(
+        default="all",
+        description="Filtrar por categoría: 'curated', 'reference', o 'all' (default)",
+    )
 
 
 class CompareInput(StrictToolInput):
@@ -209,23 +213,45 @@ def _get_chroma_collection():
 
 
 @tool(args_schema=SearchInput)
-async def search_documents(query: str, top_k: int = 5) -> str:
+async def search_documents(
+    query: str,
+    top_k: int = 5,
+    category_filter: str = "all",
+) -> str:
     """Busca chunks relevantes por similitud semántica en ChromaDB.
 
     Genera un embedding para la consulta usando el modelo local
     y busca los top_k chunks más similares en el vector store.
     Retorna el contenido, score de similitud y metadatos de cada chunk.
+
+    Args:
+        query: Texto de búsqueda semántica.
+        top_k: Número de resultados (1-20).
+        category_filter: 'curated', 'reference', o 'all' (default).
     """
-    logger.info("🔍 search_documents(query='%s', top_k=%d)", query[:60], top_k)
+    logger.info(
+        "🔍 search_documents(query='%s', top_k=%d, category_filter=%s)",
+        query[:60],
+        top_k,
+        category_filter,
+    )
     try:
         query_emb = _compute_embedding(query)
         collection = _get_chroma_collection()
 
+        query_kwargs = {
+            "query_embeddings": [query_emb],
+            "n_results": top_k,
+            "include": ["documents", "metadatas", "distances"],
+        }
+
+        # Aplicar filtro por categoría si no es "all"
+        if category_filter and category_filter != "all":
+            query_kwargs["where"] = {"category": category_filter}
+
         results = await asyncio.to_thread(
             collection.query,
-            query_embeddings=[query_emb],
-            n_results=top_k,
-            include=["documents", "metadatas", "distances"],
+            **query_kwargs,
         )
 
         items = []
@@ -238,15 +264,19 @@ async def search_documents(query: str, top_k: int = 5) -> str:
                 metadata = results["metadatas"][0][i] if results["metadatas"] else {}
                 content = results["documents"][0][i] if results["documents"] else ""
 
+                source_type = metadata.get("category", "curated")
+
                 items.append(
                     {
                         "chunk_id": chunk_id,
                         "content": content[:500],  # Truncar para la respuesta
                         "similarity": similarity,
+                        "source_type": source_type,
                         "metadata": {
                             "doc_id": metadata.get("doc_id", ""),
                             "chunk_index": metadata.get("chunk_index", 0),
                             "token_count": metadata.get("token_count", 0),
+                            "category": source_type,
                         },
                     }
                 )

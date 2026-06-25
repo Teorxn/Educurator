@@ -5,6 +5,7 @@ export interface Document {
   filename: string;
   file_type: "pdf" | "docx" | "txt";
   status: "needs_review" | "processing" | "approved" | "rejected" | "archived";
+  category: "curated" | "reference";
   uploaded_at: string;
   size_bytes: number;
 }
@@ -24,6 +25,7 @@ export const login = (email: string, password: string) =>
 
 export const getDocs = (params?: {
   status?: string;
+  category?: string;
   page?: number;
   limit?: number;
 }) => api.get<DocsResponse>("/api/docs", { params });
@@ -59,6 +61,7 @@ export interface Suggestion {
   source_doc_id: string;
   source_chunk_ids: string[];
   source_chunks: ChunkEvidence[];
+  source_type: string | null;
   confidence_score: number;
   reasoning: string | null;
   status: "pending" | "approved" | "rejected";

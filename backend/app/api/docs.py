@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.dependencies import get_current_user
 from app.config import settings
 from app.database import get_db
-from app.models.models import Document, DocumentStatus, User
+from app.models.models import Document, DocumentCategory, DocumentStatus, User
 from app.schemas.docs import (
     DocHistoryListResponse,
     DocsListResponse,
@@ -43,6 +43,7 @@ def _sanitize_filename(name: str) -> str:
 @router.get("", response_model=DocsListResponse)
 async def list_docs(
     status_filter: str | None = Query(None, alias="status"),
+    category_filter: str | None = Query("curated", alias="category"),
     page: int = Query(1, ge=1),
     limit: int = Query(20, ge=1, le=100),
     db: AsyncSession = Depends(get_db),
@@ -56,6 +57,14 @@ async def list_docs(
             s = DocumentStatus(status_filter)
             query = query.where(Document.status == s)
             count_q = count_q.where(Document.status == s)
+        except ValueError:
+            pass
+
+    if category_filter and category_filter != "all":
+        try:
+            c = DocumentCategory(category_filter)
+            query = query.where(Document.category == c)
+            count_q = count_q.where(Document.category == c)
         except ValueError:
             pass
 

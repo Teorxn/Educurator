@@ -58,6 +58,7 @@ class _SearchResultMetadata(BaseModel):
     doc_id: str
     chunk_index: int
     token_count: int
+    category: str | None = None
 
 
 class _SearchResult(BaseModel):
@@ -66,6 +67,7 @@ class _SearchResult(BaseModel):
     chunk_id: str
     content: str
     similarity: float
+    source_type: str | None = None
     metadata: _SearchResultMetadata
 
 

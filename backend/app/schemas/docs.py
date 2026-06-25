@@ -3,7 +3,7 @@ from datetime import datetime
 
 from pydantic import BaseModel
 
-from app.models.models import DocumentStatus
+from app.models.models import DocumentCategory, DocumentStatus
 
 
 class DocumentResponse(BaseModel):
@@ -11,6 +11,7 @@ class DocumentResponse(BaseModel):
     filename: str
     file_type: str
     status: DocumentStatus
+    category: DocumentCategory = DocumentCategory.curated
     size_bytes: int
     uploaded_at: datetime
 

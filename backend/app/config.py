@@ -19,6 +19,7 @@ class Settings(BaseSettings):
 
     # Upload
     UPLOAD_DIR: str = "data/uploads"
+    REFERENCE_DOCS_DIR: str = "data/references"
     MAX_FILE_SIZE: int = 52_428_800  # 50 MB
 
     # LLM (opcional — si no se configura, el grafo funciona sin agente)

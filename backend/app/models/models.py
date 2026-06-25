@@ -26,6 +26,11 @@ class DocumentStatus(str, enum.Enum):
     archived = "archived"
 
 
+class DocumentCategory(str, enum.Enum):
+    curated = "curated"
+    reference = "reference"
+
+
 class SuggestionType(str, enum.Enum):
     redundancy = "redundancy"
     conflict = "conflict"
@@ -82,6 +87,12 @@ class Document(Base):
     status: Mapped[DocumentStatus] = mapped_column(
         SAEnum(DocumentStatus),
         default=DocumentStatus.needs_review,
+        nullable=False,
+        index=True,
+    )
+    category: Mapped[DocumentCategory] = mapped_column(
+        SAEnum(DocumentCategory),
+        default=DocumentCategory.curated,
         nullable=False,
         index=True,
     )
