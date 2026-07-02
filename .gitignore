@@ -26,6 +26,21 @@ data/archived/*
 !data/uploads/.gitkeep
 !data/processed/.gitkeep
 !data/archived/.gitkeep
+data/references/*
+!data/references/.gitkeep
+backend/data/uploads/*
+backend/data/processed/*
+backend/data/archived/*
+!backend/data/uploads/.gitkeep
+!backend/data/processed/.gitkeep
+!backend/data/archived/.gitkeep
+backend/data/references/*
+!backend/data/references/.gitkeep
+
+# ── Coverage / Temp ────────────────────────────────────────────────────
+.coverage
+*.coverage
+NUL
 
 # ── IDE / OS ──────────────────────────────────────────────────────────────
 .idea/

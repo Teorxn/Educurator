@@ -1,7 +1,24 @@
 import api from "./axios";
 
-export type SuggestionType = "redundancy" | "conflict" | "faq" | "update";
+export type SuggestionType =
+  "redundancy" | "conflict" | "faq" | "update" | "inconsistency";
 export type SuggestionStatus = "pending" | "approved" | "rejected";
+
+// Severidad para hallazgos de inconsistencia
+export type SeverityLevel = "high" | "medium" | "low";
+
+export interface InconsistencyEvidence {
+  chunk_id_a: string;
+  chunk_id_b: string;
+  doc_id_a: string;
+  doc_id_b: string;
+  extract_a: string;
+  extract_b: string;
+  description: string;
+  suggestion: string;
+  severity: SeverityLevel;
+  type: "self_contradiction" | "terminology" | "numerical" | "structural";
+}
 
 export interface ChunkEvidence {
   chunk_id: string;
@@ -22,6 +39,7 @@ export interface Suggestion {
   source_chunk_ids: string[] | null;
   source_chunks: ChunkEvidence[];
   source_doc_id: string | null;
+  source_web_url: string | null;
   rejection_reason: string | null;
   created_at: string;
   reviewed_at: string | null;

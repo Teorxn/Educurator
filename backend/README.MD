@@ -12,7 +12,6 @@ Guía rápida para levantar el stack con Docker, correr migraciones y seed.
 Crea el archivo de entorno desde la **raíz del proyecto**:
 
 ```bash
-cd ..  # si estás en backend/
 cp .env.example .env
 ```
 
@@ -20,33 +19,37 @@ Edita `.env` con los valores necesarios (ver `.env.example` como referencia).
 
 ## Levantar servicios con Docker
 
+El proyecto usa un solo `docker-compose.yml` en la raíz con perfiles.
+
+### Solo infraestructura (db, chromadb, langfuse)
+
+El frontend y backend se ejecutan en local a través de la terminal:
+
 ```bash
-# Desde el directorio backend/
-docker compose up -d db chromadb
+docker compose up -d
 docker compose ps
 ```
 
-Esto levanta PostgreSQL (puerto `5434` del host) y ChromaDB usando las
-definiciones del `docker-compose.yml` raíz sin duplicación.
+Esto levanta PostgreSQL (puerto `5434` del host), ChromaDB y Langfuse.
 
-> Si quieres el stack completo (api + langfuse incluidos), usa el compose raíz:
-> ```bash
-> cd ..
-> docker compose up -d
-> ```
+### Stack completo (infra + api)
+
+```bash
+docker compose --profile full up -d
+```
 
 ## Migraciones
 
 Con el stack completo levantado (api incluido):
 
 ```bash
-docker compose exec api alembic upgrade head
+docker compose --profile full exec api alembic upgrade head
 ```
 
 ## Seed
 
 ```bash
-docker compose exec api python seed.py
+docker compose --profile full exec api python seed.py
 ```
 
 ## Verificar salud
@@ -58,6 +61,7 @@ curl http://localhost:8000/health
 ## Notas
 
 - Postgres se expone en el host como `5434:5432` para evitar choques con instalaciones locales de PostgreSQL.
+- El `.env` ya viene configurado para desarrollo local (conexiones a `localhost`).
 - Si quieres reiniciar todo desde cero (datos incluidos):
 
 ```bash
@@ -66,7 +70,7 @@ docker compose down -v
 
 ---
 
-## Ejecución local (sin Docker)
+## Ejecución local (sin Docker para el API)
 
 Usa esta opción si quieres correr el API desde tu máquina y solo usar Docker para la base de datos.
 
@@ -78,7 +82,7 @@ python -m venv .venv
 
 Windows (PowerShell):
 ```powershell
-.\.venv\Scripts\activate
+.\\.venv\Scripts\activate
 ```
 
 Linux/Mac:
@@ -92,12 +96,10 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-### 3) Ajustar `.env` para local
-
-Si la base está en Docker, usa el puerto expuesto en el host:
+### 3) Iniciar infraestructura
 
 ```bash
-DATABASE_URL=postgresql+asyncpg://postgres:postgres@localhost:5434/educurator
+docker compose up -d
 ```
 
 ### 4) Migraciones y seed (local)

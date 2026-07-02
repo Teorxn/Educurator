@@ -233,7 +233,7 @@ class TestDetectConflict:
 class TestSuggestUpdate:
     """Creación de sugerencias en estado pending."""
 
-    @patch("app.tools.registry.AsyncSessionLocal")
+    @patch("app.database.AsyncSessionLocal")
     @pytest.mark.asyncio
     async def test_success(self, mock_session_factory):
         """Crea sugerencia correctamente en estado pending."""
@@ -314,11 +314,11 @@ class TestGenerateFaqEntry:
 
     @pytest.mark.asyncio
     async def test_insufficient_content(self):
-        """Retorna error si el chunk es demasiado corto."""
+        """Retorna error si el chunk no produce oraciones válidas."""
         result = await generate_faq_entry.ainvoke(
             {
                 "chunk_id": "chunk_empty",
-                "chunk_content": "Corto.",
+                "chunk_content": "Cortó.   Y.",
                 "topic": "general",
             }
         )
@@ -354,7 +354,7 @@ class TestGenerateFaqEntry:
 class TestLogAction:
     """Registro de acciones en audit trail."""
 
-    @patch("app.tools.registry.AsyncSessionLocal")
+    @patch("app.database.AsyncSessionLocal")
     @pytest.mark.asyncio
     async def test_log_with_document_id(self, mock_session_factory):
         """Registra acción con document_id válido."""
@@ -382,7 +382,7 @@ class TestLogAction:
         assert payload["action"] == "search"
         assert payload["document_id"] == "550e8400-e29b-41d4-a716-446655440000"
 
-    @patch("app.tools.registry.AsyncSessionLocal")
+    @patch("app.database.AsyncSessionLocal")
     @pytest.mark.asyncio
     async def test_log_without_document_id(self, mock_session_factory):
         """Registra acción global sin document_id (debe aceptar None)."""
@@ -408,7 +408,7 @@ class TestLogAction:
         assert payload["status"] == "logged"
         assert payload["document_id"] is None
 
-    @patch("app.tools.registry.AsyncSessionLocal")
+    @patch("app.database.AsyncSessionLocal")
     @pytest.mark.asyncio
     async def test_log_with_invalid_uuid_does_not_crash(self, mock_session_factory):
         """No debe fallar si document_id no es UUID válido."""
@@ -445,7 +445,7 @@ class TestLogAction:
 class TestDetectRedundancy:
     """Detección de redundancia entre chunks."""
 
-    @patch("app.tools.registry.detect_redundancy as core_detect")
+    @patch("app.rag.redundancy.detect_redundancy_report")
     @pytest.mark.asyncio
     async def test_success(self, mock_core):
         """Retorna reporte de redundancia correctamente estructurado."""
@@ -489,3 +489,161 @@ class TestDetectRedundancy:
         assert payload["pair_count"] == 1
         assert len(payload["redundant_pairs"]) == 1
         assert payload["threshold"] == 0.85
+
+
+# =============================================================================
+#  search_web
+# =============================================================================
+
+
+class TestSearchWeb:
+    """Búsqueda web con proveedores Tavily y DuckDuckGo."""
+
+    @patch("app.tools.registry.settings")
+    @pytest.mark.asyncio
+    async def test_duckduckgo_success(self, mock_settings):
+        """Retorna resultados estructurados con DuckDuckGo."""
+        mock_settings.WEB_SEARCH_PROVIDER = "duckduckgo"
+        mock_settings.WEB_SEARCH_TIMEOUT = 10
+        mock_settings.TAVILY_API_KEY = ""
+
+        from app.tools.registry import search_web
+
+        # Mockear _DDGS_CLASS — la v7.x es síncrona, se llama via asyncio.to_thread
+        with patch("app.tools.registry._DDGS_CLASS") as mock_ddgs:
+            mock_instance = MagicMock()
+            mock_ddgs.return_value = mock_instance
+
+            mock_instance.text.return_value = [
+                {
+                    "title": "Resultado 1",
+                    "href": "https://example.com/1",
+                    "body": "Contenido del resultado 1",
+                },
+                {
+                    "title": "Resultado 2",
+                    "href": "https://example.com/2",
+                    "body": "Contenido del resultado 2",
+                },
+            ]
+
+            result = await search_web.ainvoke(
+                {
+                    "query": "teorema de pitágoras",
+                    "max_results": 5,
+                }
+            )
+            payload = json.loads(result)
+
+            assert payload["status"] == "success"
+            assert payload["query"] == "teorema de pitágoras"
+            assert payload["total"] == 2
+            assert payload["provider"] == "duckduckgo"
+            assert len(payload["results"]) == 2
+            assert payload["results"][0]["title"] == "Resultado 1"
+            assert payload["results"][0]["source_type"] == "web"
+            assert "hash" in payload["results"][0]
+
+    @patch("app.tools.registry.settings")
+    @pytest.mark.asyncio
+    async def test_timeout_error(self, mock_settings):
+        """Maneja timeout correctamente."""
+        mock_settings.WEB_SEARCH_PROVIDER = "duckduckgo"
+        mock_settings.WEB_SEARCH_TIMEOUT = 1
+
+        from app.tools.registry import search_web
+
+        with patch("app.tools.registry._DDGS_CLASS") as mock_ddgs:
+            mock_instance = MagicMock()
+            mock_ddgs.return_value = mock_instance
+
+            # Simular que la llamada síncrona tarda más que el timeout
+            import asyncio
+
+            async def fake_slow():
+                await asyncio.sleep(10)
+                return []
+
+            mock_instance.text.side_effect = lambda **kw: asyncio.run(asyncio.sleep(10))
+            mock_instance.text.side_effect = lambda **kw: asyncio.run(asyncio.sleep(10))
+
+            result = await search_web.ainvoke(
+                {
+                    "query": "consulta lenta",
+                    "max_results": 3,
+                }
+            )
+            payload = json.loads(result)
+
+            assert payload["status"] == "error"
+            assert "timeout" in payload["error"].lower()
+
+    @patch("app.tools.registry.settings")
+    @pytest.mark.asyncio
+    async def test_error_response(self, mock_settings):
+        """Maneja errores del proveedor."""
+        mock_settings.WEB_SEARCH_PROVIDER = "duckduckgo"
+        mock_settings.WEB_SEARCH_TIMEOUT = 10
+
+        from app.tools.registry import search_web
+
+        with patch("app.tools.registry._DDGS_CLASS") as mock_ddgs:
+            mock_instance = MagicMock()
+            mock_ddgs.return_value = mock_instance
+            mock_instance.text.side_effect = Exception("Error de conexión")
+
+            result = await search_web.ainvoke(
+                {
+                    "query": "consulta con error",
+                    "max_results": 3,
+                }
+            )
+            payload = json.loads(result)
+
+            assert payload["status"] == "error"
+            assert "Error de conexión" in payload["error"]
+
+
+# =============================================================================
+#  suggest_update — source_web_url
+# =============================================================================
+
+
+class TestSuggestUpdateWithWebUrl:
+    """Suggest_update con source_web_url opcional."""
+
+    @patch("app.database.AsyncSessionLocal")
+    @pytest.mark.asyncio
+    async def test_with_source_web_url(self, mock_session_factory):
+        """Acepta source_web_url opcional."""
+        from app.tools.registry import suggest_update
+
+        mock_session = AsyncMock()
+        mock_session_factory.return_value.__aenter__.return_value = mock_session
+
+        mock_suggestion = MagicMock()
+        mock_suggestion.id = "sug-123"
+        mock_session.add = MagicMock()
+        mock_session.commit = AsyncMock()
+        mock_session.refresh = AsyncMock()
+
+        # Patch uuid.UUID para que no falle
+        with patch("uuid.UUID", return_value="00000000-0000-0000-0000-000000000001"):
+            with patch("app.models.models.Suggestion", return_value=mock_suggestion):
+                with patch.object(mock_suggestion, "id", "sug-123"):
+                    result = await suggest_update.ainvoke(
+                        {
+                            "document_id": "550e8400-e29b-41d4-a716-446655440000",
+                            "description": "Sugerencia con fuente web",
+                            "source_doc_id": "doc_1",
+                            "source_chunk_ids": ["chunk_1"],
+                            "confidence_score": 0.9,
+                            "suggestion_type": "update",
+                            "reasoning": "Basado en búsqueda web",
+                            "source_web_url": "https://example.com/articulo",
+                        }
+                    )
+                    payload = json.loads(result)
+
+                    assert payload["status"] == "success"
+                    assert payload["source_web_url"] == "https://example.com/articulo"

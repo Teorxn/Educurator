@@ -144,6 +144,9 @@ def agent_state_empty() -> AgentState:
         "messages": [],
         "suggestions": [],
         "redundancy_findings": [],
+        "inconsistency_findings": [],
+        "terminology_map": {},
+        "web_search_results": [],
         "error": None,
     }
 
@@ -158,6 +161,9 @@ def agent_state_with_docs(agent_state_empty) -> AgentState:
         messages=[],
         suggestions=[],
         redundancy_findings=[],
+        inconsistency_findings=[],
+        terminology_map={},
+        web_search_results=[],
         error=None,
     )
 
@@ -189,7 +195,7 @@ class TestGraphInfo:
         }
         assert expected_nodes.issubset(set(info["nodes"]))
 
-        # Tools esperadas
+        # Tools esperadas (ahora incluye search_web y detect_inconsistencies)
         expected_tools = {
             "search_documents",
             "compare_content",
@@ -198,6 +204,8 @@ class TestGraphInfo:
             "generate_faq_entry",
             "log_action",
             "detect_redundancy",
+            "search_web",
+            "detect_inconsistencies",
         }
         assert set(info["tools"]) == expected_tools
 
@@ -231,6 +239,9 @@ class TestLoadDocumentsNode:
             "messages": [],
             "suggestions": [],
             "redundancy_findings": [],
+            "inconsistency_findings": [],
+            "terminology_map": {},
+            "web_search_results": [],
             "error": None,
         }
         result = await load_documents_node(state)
@@ -261,6 +272,9 @@ class TestLoadDocumentsNode:
             "messages": [],
             "suggestions": [],
             "redundancy_findings": [],
+            "inconsistency_findings": [],
+            "terminology_map": {},
+            "web_search_results": [],
             "error": None,
         }
         result = await load_documents_node(state)
@@ -327,6 +341,9 @@ class TestChunkAndEmbedNode:
                 "messages": [],
                 "suggestions": [],
                 "redundancy_findings": [],
+                "inconsistency_findings": [],
+                "terminology_map": {},
+                "web_search_results": [],
                 "error": None,
             }
             result = await chunk_and_embed_node(state)
@@ -354,6 +371,9 @@ class TestChunkAndEmbedNode:
             "messages": [],
             "suggestions": [],
             "redundancy_findings": [],
+            "inconsistency_findings": [],
+            "terminology_map": {},
+            "web_search_results": [],
             "error": None,
         }
         result = await chunk_and_embed_node(state)
@@ -384,6 +404,10 @@ class TestRedundancyDetectionNode:
                 confidence_score=0.92,
                 doc_id_a="doc_a",
                 doc_id_b="doc_b",
+                content_a_preview="texto chunk a 1",
+                content_b_preview="texto chunk b 1",
+                token_count_a=50,
+                token_count_b=60,
             ),
             MagicMock(
                 chunk_id_a="chunk_1",
@@ -392,6 +416,10 @@ class TestRedundancyDetectionNode:
                 confidence_score=0.88,
                 doc_id_a="doc_a",
                 doc_id_b="doc_b",
+                content_a_preview="texto chunk a 2",
+                content_b_preview="texto chunk b 2",
+                token_count_a=40,
+                token_count_b=70,
             ),
         ]
         mock_detect_bulk.return_value = [mock_report]
@@ -403,6 +431,9 @@ class TestRedundancyDetectionNode:
             "messages": [],
             "suggestions": [],
             "redundancy_findings": [],
+            "inconsistency_findings": [],
+            "terminology_map": {},
+            "web_search_results": [],
             "error": None,
         }
         result = await redundancy_detection_node(state)
@@ -426,6 +457,9 @@ class TestRedundancyDetectionNode:
             "messages": [],
             "suggestions": [],
             "redundancy_findings": [],
+            "inconsistency_findings": [],
+            "terminology_map": {},
+            "web_search_results": [],
             "error": None,
         }
         result = await redundancy_detection_node(state)
@@ -455,6 +489,9 @@ class TestGenerateSuggestionsNode:
             "messages": [],
             "suggestions": [],
             "redundancy_findings": sample_redundancy_findings,
+            "inconsistency_findings": [],
+            "terminology_map": {},
+            "web_search_results": [],
             "error": None,
         }
         result = await generate_suggestions_node(state)
@@ -535,6 +572,9 @@ class TestGenerateSuggestionsNode:
             "messages": messages,
             "suggestions": [],
             "redundancy_findings": [],
+            "inconsistency_findings": [],
+            "terminology_map": {},
+            "web_search_results": [],
             "error": None,
         }
         result = await generate_suggestions_node(state)
@@ -557,6 +597,9 @@ class TestGenerateSuggestionsNode:
             "messages": [],
             "suggestions": [],
             "redundancy_findings": [],
+            "inconsistency_findings": [],
+            "terminology_map": {},
+            "web_search_results": [],
             "error": None,
         }
         result = await generate_suggestions_node(state)
@@ -630,6 +673,9 @@ class TestFaqGenerationNode:
             "messages": [],
             "suggestions": [],
             "redundancy_findings": [],
+            "inconsistency_findings": [],
+            "terminology_map": {},
+            "web_search_results": [],
             "error": None,
         }
 
@@ -669,6 +715,9 @@ class TestFaqGenerationNode:
             "messages": [],
             "suggestions": [],
             "redundancy_findings": [],
+            "inconsistency_findings": [],
+            "terminology_map": {},
+            "web_search_results": [],
             "error": None,
         }
 
@@ -700,6 +749,9 @@ class TestFaqGenerationNode:
             "messages": [],
             "suggestions": [],
             "redundancy_findings": [],
+            "inconsistency_findings": [],
+            "terminology_map": {},
+            "web_search_results": [],
             "error": None,
         }
 
@@ -757,6 +809,9 @@ class TestFaqGenerationNode:
             "messages": [],
             "suggestions": [existing_suggestion],
             "redundancy_findings": [],
+            "inconsistency_findings": [],
+            "terminology_map": {},
+            "web_search_results": [],
             "error": None,
         }
 
@@ -810,6 +865,9 @@ class TestWaitHumanApprovalNode:
                 {"document_id": doc_ids[0], "type": "conflict"},
             ],
             "redundancy_findings": [],
+            "inconsistency_findings": [],
+            "terminology_map": {},
+            "web_search_results": [],
             "error": None,
         }
         await wait_human_approval_node(state)
@@ -859,6 +917,9 @@ class TestFullPipeline:
                 "messages": [],
                 "suggestions": [],
                 "redundancy_findings": [],
+                "inconsistency_findings": [],
+                "terminology_map": {},
+                "web_search_results": [],
                 "error": None,
             }
         )
@@ -919,10 +980,14 @@ class TestSuggestionPersistence:
             "messages": [],
             "suggestions": [],
             "redundancy_findings": [finding],
+            "inconsistency_findings": [],
+            "terminology_map": {},
+            "web_search_results": [],
             "error": None,
         }
         result = await generate_suggestions_node(state)
 
+        # Debe haber creado la sugerencia igual, con confidence fijado a 0.0
         assert len(result["suggestions"]) == 1
         suggestion_data = result["suggestions"][0]
 
@@ -957,6 +1022,9 @@ class TestSuggestionPersistence:
             "messages": [],
             "suggestions": [],
             "redundancy_findings": [finding],
+            "inconsistency_findings": [],
+            "terminology_map": {},
+            "web_search_results": [],
             "error": None,
         }
         result = await generate_suggestions_node(state)
@@ -988,6 +1056,9 @@ class TestSuggestionPersistence:
             "messages": [],
             "suggestions": [],
             "redundancy_findings": [finding],
+            "inconsistency_findings": [],
+            "terminology_map": {},
+            "web_search_results": [],
             "error": None,
         }
         result = await generate_suggestions_node(state)
@@ -1052,6 +1123,8 @@ class TestGraphStructure:
             "load_documents",
             "chunk_and_embed",
             "redundancy_detection",
+            "inconsistency_detection",
+            "web_search",
             "faq_generation",
             "generate_suggestions",
             "wait_human_approval",
@@ -1069,6 +1142,9 @@ class TestGraphStructure:
             "messages": [],
             "suggestions": [],
             "redundancy_findings": [],
+            "inconsistency_findings": [],
+            "terminology_map": {},
+            "web_search_results": [],
             "error": None,
         }
         assert _has_documents(state_with_docs) == "continue"
@@ -1084,6 +1160,9 @@ class TestGraphStructure:
             "messages": [],
             "suggestions": [],
             "redundancy_findings": [],
+            "inconsistency_findings": [],
+            "terminology_map": {},
+            "web_search_results": [],
             "error": None,
         }
         assert _has_documents(state_without_docs) == "end"
@@ -1104,6 +1183,8 @@ class TestGraphStructure:
         assert "load_documents" in info["nodes"]
         assert "chunk_and_embed" in info["nodes"]
         assert "redundancy_detection" in info["nodes"]
+        assert "inconsistency_detection" in info["nodes"]
+        assert "web_search" in info["nodes"]
         assert "faq_generation" in info["nodes"]
         assert "generate_suggestions" in info["nodes"]
         assert "wait_human_approval" in info["nodes"]
@@ -1119,6 +1200,8 @@ class TestGraphStructure:
         assert "load_documents" in graph.nodes
         assert "chunk_and_embed" in graph.nodes
         assert "redundancy_detection" in graph.nodes
+        assert "inconsistency_detection" in graph.nodes
+        assert "web_search" in graph.nodes
         assert "faq_generation" in graph.nodes
         assert "generate_suggestions" in graph.nodes
         assert "wait_human_approval" in graph.nodes
@@ -1134,6 +1217,9 @@ class TestGraphStructure:
             "messages": [],
             "suggestions": [],
             "redundancy_findings": [],
+            "inconsistency_findings": [],
+            "terminology_map": {},
+            "web_search_results": [],
             "error": None,
         }
         from app.agents.graph import _has_documents
@@ -1257,6 +1343,7 @@ class TestPackageExports:
         assert hasattr(agents, "redundancy_detection_node")
         assert hasattr(agents, "generate_suggestions_node")
         assert hasattr(agents, "wait_human_approval_node")
+        assert hasattr(agents, "web_search_node")
 
     def test_tools_package_exports(self):
         """El paquete tools debe exportar los símbolos principales."""
@@ -1318,6 +1405,9 @@ class TestAuditTrail:
             "messages": [],
             "suggestions": [],
             "redundancy_findings": [],
+            "inconsistency_findings": [],
+            "terminology_map": {},
+            "web_search_results": [],
             "error": None,
         }
         await wait_human_approval_node(state)
@@ -1335,3 +1425,143 @@ class TestAuditTrail:
         assert entry.before_content == {"status": "processing"}
         assert entry.after_content["status"] == "needs_review"
         assert "suggestions_count" in entry.after_content
+
+
+# =============================================================================
+#  TESTS: WEB SEARCH NODE
+# =============================================================================
+
+
+class TestWebSearchNode:
+    """Prueba el nodo de búsqueda web en el grafo."""
+
+    @patch("app.agents.nodes.settings")
+    @patch("app.tools.registry.search_web")
+    @pytest.mark.asyncio
+    async def test_returns_results_from_chunks(self, mock_search_web, mock_settings):
+        """Debe generar consultas desde chunks y retornar resultados."""
+        from app.agents.nodes import web_search_node
+
+        mock_settings.WEB_SEARCH_MAX_RESULTS = 3
+
+        async def fake_search(input_dict):
+            query = input_dict.get("query", "")
+            return json.dumps(
+                {
+                    "status": "success",
+                    "query": query,
+                    "results": [
+                        {
+                            "title": f"Resultado para {query[:20]}",
+                            "url": "https://example.com",
+                            "snippet": "Snippet del resultado",
+                            "content": "Contenido completo del resultado de búsqueda web",
+                            "source_type": "web",
+                            "hash": "abc123",
+                        }
+                    ],
+                    "total": 1,
+                    "provider": "duckduckgo",
+                }
+            )
+
+        mock_search_web.ainvoke = AsyncMock(side_effect=fake_search)
+
+        state: AgentState = {
+            "document_ids": ["doc1"],
+            "documents_text": {"doc1": "Texto del documento"},
+            "chunks": [
+                {
+                    "chroma_id": "doc1_chunk_0",
+                    "chunk_index": 0,
+                    "text": "El teorema de Pitágoras establece que en un triángulo rectángulo, el cuadrado de la hipotenusa es igual a la suma de los cuadrados de los catetos.",
+                    "token_count": 20,
+                    "hash": "hash1",
+                    "page_number": 1,
+                },
+            ],
+            "messages": [],
+            "suggestions": [],
+            "redundancy_findings": [],
+            "inconsistency_findings": [],
+            "terminology_map": {},
+            "web_search_results": [],
+            "error": None,
+        }
+
+        result = await web_search_node(state)
+
+        assert "web_search_results" in result
+        assert len(result["web_search_results"]) > 0
+        assert result["web_search_results"][0]["source_type"] == "web"
+        assert result["web_search_results"][0]["title"] is not None
+
+    @pytest.mark.asyncio
+    async def test_empty_when_no_chunks(self):
+        """Sin chunks, debe retornar lista vacía."""
+        from app.agents.nodes import web_search_node
+
+        state: AgentState = {
+            "document_ids": [],
+            "documents_text": {},
+            "chunks": [],
+            "messages": [],
+            "suggestions": [],
+            "redundancy_findings": [],
+            "inconsistency_findings": [],
+            "terminology_map": {},
+            "web_search_results": [],
+            "error": None,
+        }
+
+        result = await web_search_node(state)
+        assert "web_search_results" in result
+        assert len(result["web_search_results"]) == 0
+
+    @patch("app.agents.nodes.settings")
+    @patch("app.tools.registry.search_web")
+    @pytest.mark.asyncio
+    async def test_handles_search_failure_gracefully(
+        self, mock_search_web, mock_settings
+    ):
+        """Si search_web falla, el nodo no debe romper el pipeline."""
+        from app.agents.nodes import web_search_node
+
+        mock_settings.WEB_SEARCH_MAX_RESULTS = 3
+
+        async def fake_fail(input_dict):
+            return json.dumps(
+                {
+                    "status": "error",
+                    "error": "Error simulado",
+                }
+            )
+
+        mock_search_web.ainvoke = AsyncMock(side_effect=fake_fail)
+
+        state: AgentState = {
+            "document_ids": ["doc1"],
+            "documents_text": {},
+            "chunks": [
+                {
+                    "chroma_id": "doc1_chunk_0",
+                    "chunk_index": 0,
+                    "text": "Contenido educativo con información sobre temas importantes del curso.",
+                    "token_count": 10,
+                    "hash": "hash1",
+                    "page_number": 1,
+                },
+            ],
+            "messages": [],
+            "suggestions": [],
+            "redundancy_findings": [],
+            "inconsistency_findings": [],
+            "terminology_map": {},
+            "web_search_results": [],
+            "error": None,
+        }
+
+        result = await web_search_node(state)
+        # No debe explotar, debe retornar lista vacía o con resultados parciales
+        assert "web_search_results" in result
+        assert isinstance(result["web_search_results"], list)

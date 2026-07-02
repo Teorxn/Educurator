@@ -10,8 +10,16 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.dependencies import get_current_user
 from app.config import settings
 from app.database import get_db
-from app.models.models import Document, DocumentCategory, DocumentStatus, User
+from app.models.models import (
+    Document,
+    DocumentCategory,
+    DocumentChunk,
+    DocumentStatus,
+    User,
+)
 from app.schemas.docs import (
+    ChunkResponse,
+    DocContentResponse,
     DocHistoryListResponse,
     DocsListResponse,
     DocumentHistoryResponse,
@@ -94,6 +102,57 @@ async def get_doc(
     if not doc:
         raise HTTPException(status_code=404, detail="Document not found")
     return doc
+
+
+# ── GET /api/docs/{id}/content ───────────────────────────────────────────────
+
+
+@router.get("/{doc_id}/content", response_model=DocContentResponse)
+async def get_doc_content(
+    doc_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(get_current_user),
+):
+    doc = (
+        await db.execute(select(Document).where(Document.id == doc_id))
+    ).scalar_one_or_none()
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found")
+
+    # Get chunks ordered by index
+    chunks_q = (
+        select(DocumentChunk)
+        .where(DocumentChunk.document_id == doc_id)
+        .order_by(DocumentChunk.chunk_index)
+    )
+    chunks = (await db.execute(chunks_q)).scalars().all()
+
+    chunk_responses = [
+        ChunkResponse(
+            chunk_index=c.chunk_index,
+            content=c.content,
+            token_count=c.token_count,
+            page_number=c.page_number,
+        )
+        for c in chunks
+    ]
+
+    # Full concatenated text
+    full_text = "\n\n".join(c.content for c in chunks)
+
+    return DocContentResponse(
+        id=doc.id,
+        filename=doc.filename,
+        original_filename=doc.original_filename,
+        file_type=doc.file_type,
+        status=doc.status,
+        category=doc.category,
+        size_bytes=doc.size_bytes,
+        uploaded_at=doc.uploaded_at,
+        updated_at=doc.updated_at,
+        content=full_text,
+        chunks=chunk_responses,
+    )
 
 
 # ── GET /api/docs/{id}/history ──────────────────────────────────────────────

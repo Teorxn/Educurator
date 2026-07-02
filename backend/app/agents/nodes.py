@@ -41,6 +41,7 @@ from app.rag.embeddings import chunk_and_embed as embed_chunks
 from app.tools.guardrails import (
     SuggestionDataValidationError,
     ToolOutputValidationError,
+    validate_inconsistency_finding,
     validate_redundancy_finding,
     validate_suggestion_data,
 )
@@ -384,6 +385,80 @@ async def redundancy_detection_node(state: "AgentState") -> dict:
         return {"redundancy_findings": []}
 
 
+async def inconsistency_detection_node(state: "AgentState") -> dict:
+    """Detecta inconsistencias internas y terminológicas en los chunks.
+
+    Ejecuta los cuatro subtipos de detección:
+    - self_contradiction: Auto-contradicción intra-documento
+    - terminology: Terminología inconsistente entre documentos
+    - numerical: Valores numéricos contradictorios
+    - structural: Inconsistencias de formato/estructura
+
+    Los subtipos self_contradiction y terminology requieren LLM.
+    Sin LLM configurado, solo se ejecutan numerical y structural.
+    """
+    logger.info("=" * 50)
+    logger.info("🔍 inconsistency_detection_node — detectando inconsistencias")
+    logger.info("=" * 50)
+
+    chunks = state.get("chunks", [])
+    if not chunks:
+        logger.info("  ℹ️  No hay chunks para analizar")
+        return {"inconsistency_findings": [], "terminology_map": {}}
+
+    from app.rag.inconsistencies import detect_all_inconsistencies
+
+    try:
+        # Verificar si hay LLM disponible
+        llm = _get_llm_for_node()
+        enable_llm = llm is not None
+
+        existing_terminology = state.get("terminology_map", {})
+
+        findings, updated_terminology = await detect_all_inconsistencies(
+            chunks=chunks,
+            terminology_map=existing_terminology,
+            enable_llm=enable_llm,
+        )
+
+        # Validar cada hallazgo contra schema estricto
+        validated_findings: list[dict] = []
+        for finding in findings:
+            try:
+                validate_inconsistency_finding(finding)
+                validated_findings.append(finding)
+            except SuggestionDataValidationError as e:
+                logger.warning(
+                    "  ⚠️  Hallazgo de inconsistencia inválido omitido: %s",
+                    e,
+                )
+
+        logger.info(
+            "  ✅ Inconsistencias: %d hallazgos válidos de %d totales (LLM=%s)",
+            len(validated_findings),
+            len(findings),
+            "sí" if enable_llm else "no",
+        )
+        return {
+            "inconsistency_findings": validated_findings,
+            "terminology_map": updated_terminology,
+        }
+
+    except Exception as e:
+        logger.error("  ❌ Error detectando inconsistencias: %s", e)
+        return {"inconsistency_findings": [], "terminology_map": {}}
+
+
+def _get_llm_for_node():
+    """Obtiene el LLM configurado para los nodos."""
+    try:
+        from app.agents.graph import get_llm
+
+        return get_llm()
+    except Exception:
+        return None
+
+
 # ── Nodo 4: agent_node — (se usa directamente create_react_agent como subgraph) ──
 
 # El nodo agent_node y tool_executor_node están encapsulados dentro del subgraph
@@ -525,20 +600,93 @@ async def faq_generation_node(state: "AgentState") -> dict:
     return {"suggestions": existing + new_suggestions}
 
 
+# ── Nodo 4.75: web_search_node ────────────────────────────────────────────────
+
+
+async def web_search_node(state: "AgentState") -> dict:
+    """Ejecuta búsquedas web para validar datos factuales y enriquecer sugerencias.
+
+    Analiza los chunks disponibles, genera consultas relevantes y
+    almacena los resultados en web_search_results para que el
+    react_agent los use como evidencia complementaria.
+
+    Los resultados web NUNCA reemplazan fuentes documentales;
+    se marcan explícitamente con source_type="web".
+    """
+    logger.info("=" * 50)
+    logger.info("🌐 web_search_node — buscando información web complementaria")
+    logger.info("=" * 50)
+
+    chunks = state.get("chunks", [])
+    if not chunks:
+        logger.info("  ℹ️  No hay chunks para generar consultas web")
+        return {"web_search_results": []}
+
+    # Generar consultas relevantes desde el contenido de los chunks
+    topics = set()
+    for chunk in chunks[:5]:
+        text = chunk.get("text", "") or chunk.get("content", "")
+        if text and len(text.strip()) > 30:
+            first_bit = text.split(".")[0].strip()
+            if len(first_bit) > 20:
+                topics.add(first_bit[:120])
+
+    queries = list(topics)[:3]
+    if not queries:
+        logger.info("  ℹ️  No se generaron consultas web del contenido")
+        return {"web_search_results": []}
+
+    logger.info("  📋 Consultas a ejecutar: %d", len(queries))
+
+    from app.tools.registry import search_web as search_web_tool
+
+    max_results = settings.WEB_SEARCH_MAX_RESULTS
+    all_results: list[dict] = []
+
+    for query in queries:
+        try:
+            result_json = await search_web_tool.ainvoke(
+                {
+                    "query": query,
+                    "max_results": max_results,
+                }
+            )
+            payload = json.loads(result_json)
+            if payload.get("status") == "success":
+                all_results.extend(payload.get("results", []))
+                logger.info(
+                    "  ✅ Búsqueda: '%s' → %d resultados",
+                    query[:50],
+                    len(payload.get("results", [])),
+                )
+            else:
+                logger.warning(
+                    "  ⚠️  Búsqueda falló '%s': %s",
+                    query[:50],
+                    payload.get("error", ""),
+                )
+        except Exception as e:
+            logger.error("  ❌ Error en búsqueda '%s': %s", query[:50], e)
+
+    logger.info("  📊 Resultados web recolectados: %d", len(all_results))
+    return {"web_search_results": all_results}
+
+
 # ── Nodo 5: generate_suggestions_node ────────────────────────────────────────
 
 
 async def generate_suggestions_node(state: "AgentState") -> dict:
     """Procesa las respuestas del agente y crea sugerencias en Postgres.
 
-    También procesa los hallazgos de redundancia detectados automáticamente
-    por redundancy_detection_node, creando sugerencias de tipo 'redundancy'
-    para cada par redundante encontrado.
+    También procesa los hallazgos de redundancia e inconsistencia detectados
+    automáticamente, creando sugerencias de tipo 'redundancy' y 'conflict'
+    respectivamente.
 
     Flujo:
       1. Procesa tool calls de suggest_update del agente ReAct
       2. Procesa redundancy_findings del nodo de detección automática
-      3. Persiste todo en Postgres con estado 'pending'
+      3. Procesa inconsistency_findings del nodo de detección automática
+      4. Persiste todo en Postgres con estado 'pending'
     """
     logger.info("=" * 50)
     logger.info("💡 generate_suggestions_node — generando sugerencias")
@@ -547,6 +695,7 @@ async def generate_suggestions_node(state: "AgentState") -> dict:
     suggestions: list[dict] = []
     messages = state.get("messages", [])
     redundancy_findings = state.get("redundancy_findings", [])
+    inconsistency_findings = state.get("inconsistency_findings", [])
 
     async with AsyncSessionLocal() as db:
         # ── 1. Procesar resultados del agente ReAct ────────────────────────
@@ -688,6 +837,100 @@ async def generate_suggestions_node(state: "AgentState") -> dict:
 
             except Exception as e:
                 logger.error("  ❌ Error creando sugerencia de redundancia: %s", e)
+
+        # ── 3. Procesar hallazgos de inconsistencia automática ───────────────
+        for finding in inconsistency_findings:
+            try:
+                inc_type = finding.get("type", "conflict")
+                severity = finding.get("severity", "medium")
+                chunk_id_a = finding.get("chunk_id_a", "")
+                chunk_id_b = finding.get("chunk_id_b", "")
+                doc_id_a = finding.get("doc_id_a", "")
+                doc_id_b = finding.get("doc_id_b", doc_id_a)
+                extract_a = finding.get("extract_a", "")
+                extract_b = finding.get("extract_b", "")
+                description = finding.get("description", "")
+                suggestion_text = finding.get("suggestion", "")
+
+                if not doc_id_a:
+                    continue
+
+                doc_uuid = uuid.UUID(doc_id_a)
+
+                # Construir source_chunk_ids para la sugerencia
+                source_chunks = []
+                if chunk_id_a:
+                    source_chunks.append(chunk_id_a)
+                if chunk_id_b and chunk_id_b != chunk_id_a:
+                    source_chunks.append(chunk_id_b)
+
+                # Mapa de severidad a score de confianza
+                severity_confidence = {
+                    "high": 0.85,
+                    "medium": 0.65,
+                    "low": 0.40,
+                }
+                confidence = severity_confidence.get(severity, 0.5)
+
+                type_label_map = {
+                    "self_contradiction": "Auto-contradicción",
+                    "terminology": "Terminología inconsistente",
+                    "numerical": "Valor numérico contradictorio",
+                    "structural": "Inconsistencia estructural",
+                }
+                type_label = type_label_map.get(inc_type, inc_type)
+
+                full_description = (
+                    f"[{type_label}] {description}\n\nFragmento A: {extract_a[:200]}\n"
+                )
+                if extract_b:
+                    full_description += f"Fragmento B: {extract_b[:200]}\n"
+                full_description += f"\nSugerencia: {suggestion_text}"
+
+                reasoning = (
+                    f"Detección automática de inconsistencia:\n"
+                    f"- Tipo: {inc_type}\n"
+                    f"- Severidad: {severity}\n"
+                    f"- Documento A: {doc_id_a}\n"
+                    f"- Documento B: {doc_id_b}\n"
+                    f"- Chunk A: {chunk_id_a}\n"
+                    f"- Chunk B: {chunk_id_b}\n"
+                    f"- Extracto A: {extract_a[:300]}...\n"
+                )
+                if extract_b:
+                    reasoning += f"- Extracto B: {extract_b[:300]}...\n"
+                reasoning += f"- Acción sugerida: {suggestion_text}"
+
+                suggestion = Suggestion(
+                    document_id=doc_uuid,
+                    type=SuggestionType.conflict,
+                    description=full_description,
+                    source_doc_id=doc_id_a,
+                    source_chunk_ids=source_chunks,
+                    confidence_score=confidence,
+                    reasoning=reasoning,
+                    status=SuggestionStatus.pending,
+                )
+                db.add(suggestion)
+                await db.flush()
+
+                suggestion_data = {
+                    "id": str(suggestion.id),
+                    "document_id": doc_id_a,
+                    "type": "conflict",
+                    "description": full_description,
+                    "confidence_score": confidence,
+                }
+                suggestions.append(suggestion_data)
+                logger.info(
+                    "  ✅ Sugerencia inconsistencia: %s (tipo=%s, severidad=%s)",
+                    suggestion.id,
+                    inc_type,
+                    severity,
+                )
+
+            except Exception as e:
+                logger.error("  ❌ Error creando sugerencia de inconsistencia: %s", e)
 
         await db.commit()
 

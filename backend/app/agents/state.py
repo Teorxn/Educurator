@@ -40,6 +40,21 @@ class AgentState(TypedDict):
         redundancy_detection_node. generate_suggestions_node los procesa
         y crea sugerencias de tipo 'redundancy'.
 
+    inconsistency_findings
+        Lista de hallazgos de inconsistencia detectados por
+        inconsistency_detection_node. Cada entrada incluye tipo
+        (self_contradiction, terminology, numerical, structural),
+        severidad y fragmentos de evidencia.
+
+    terminology_map
+        Mapa de términos y definiciones extraídos por el subtipo
+        'terminology'. Se usa para comparación cruzada entre documentos.
+
+    web_search_results
+        Resultados de búsqueda web almacenados por web_search_node.
+        Cada entrada contiene title, url, snippet, content, source_type, hash.
+        El react_agent puede leerlos para enriquecer sugerencias.
+
     error
         Mensaje de error si algún nodo falla. El grafo intenta continuar
         con los documentos restantes si es posible.
@@ -51,4 +66,7 @@ class AgentState(TypedDict):
     messages: Annotated[List[BaseMessage], add_messages]
     suggestions: List[dict]
     redundancy_findings: List[dict]
+    inconsistency_findings: List[dict]
+    terminology_map: dict
+    web_search_results: List[dict]
     error: Optional[str]

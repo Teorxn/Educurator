@@ -18,7 +18,6 @@ from app.api.dependencies import get_current_user, require_role
 from app.database import get_db
 from app.models.models import (
     Document,
-    DocumentCategory,
     DocumentHistory,
     DocumentStatus,
     FeedbackPattern,

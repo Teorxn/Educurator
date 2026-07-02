@@ -1,7 +1,7 @@
 """
-#13 — 6 Tools del agente: search, compare, detect, suggest, FAQ, log
+#13 — 7 Tools del agente: search, compare, detect, suggest, FAQ, log, search_web
 
-Implementación completa con acceso real a ChromaDB y Postgres.
+Implementación completa con acceso real a ChromaDB, Postgres y búsqueda web.
 Cada tool es una función async decorada con @tool de LangChain.
 
 Tools:
@@ -11,6 +11,7 @@ Tools:
   4. suggest_update    — Creación de sugerencias (solo pending)
   5. generate_faq_entry — Generación estructurada de FAQ
   6. log_action        — Persistencia de acciones en audit trail
+  7. search_web        — Búsqueda web (Tavily / DuckDuckGo)
 """
 
 import asyncio
@@ -25,6 +26,16 @@ from pydantic import BaseModel, ConfigDict, Field
 from app.config import settings
 from app.rag.redundancy import _cosine_similarity
 from app.tools.guardrails import ToolOutputValidationError, validate_tool_output
+
+# DuckDuckGo search — import a nivel de módulo para facilitar mocks en tests
+_HAS_DDGS: bool = False
+_DDGS_CLASS = None  # type: ignore
+try:
+    from duckduckgo_search import DDGS as _DDGS_CLASS
+
+    _HAS_DDGS = True
+except ImportError:
+    pass
 
 logger = logging.getLogger(__name__)
 
@@ -55,6 +66,22 @@ class SearchInput(StrictToolInput):
     category_filter: str = Field(
         default="all",
         description="Filtrar por categoría: 'curated', 'reference', o 'all' (default)",
+    )
+
+
+class WebSearchInput(StrictToolInput):
+    """Busca información actualizada en la web."""
+
+    query: str = Field(
+        min_length=1,
+        max_length=500,
+        description="Consulta de búsqueda web",
+    )
+    max_results: int = Field(
+        default=5,
+        ge=1,
+        le=20,
+        description="Número máximo de resultados (1-20)",
     )
 
 
@@ -119,7 +146,13 @@ class SuggestUpdateInput(StrictToolInput):
         max_length=5000,
         description="Razonamiento detallado del agente que justifica la sugerencia. "
         "DEBE incluir los IDs de los chunks consultados "
-        "(source_chunk_ids) para permitir verificaci\u00f3n de evidencia.",
+        "(source_chunk_ids) para permitir verificación de evidencia.",
+    )
+    source_web_url: Optional[str] = Field(
+        default=None,
+        max_length=2048,
+        description="URL opcional de fuente web que respalda la sugerencia. "
+        "Solo usar cuando el agente ha consultado la web para validar datos.",
     )
 
 
@@ -167,6 +200,37 @@ class DetectRedundancyInput(StrictToolInput):
     include_same_doc: bool = Field(
         default=True,
         description="Si incluir redundancia intra-documento (chunks del mismo documento)",
+    )
+
+
+class DetectInconsistenciesInput(StrictToolInput):
+    """Detecta inconsistencias internas y terminológicas en documentos.
+
+    Analiza auto-contradicciones, terminología inconsistente,
+    valores numéricos contradictorios y problemas estructurales.
+    """
+
+    doc_id: Optional[str] = Field(
+        default=None,
+        min_length=1,
+        description=(
+            "ID de un documento único para análisis intra-documento. "
+            "Omitir para analizar todos los documentos disponibles."
+        ),
+    )
+    doc_ids: Optional[List[str]] = Field(
+        default=None,
+        min_length=2,
+        description=(
+            "Lista de IDs de documentos para comparación cruzada. "
+            "No usar junto con doc_id."
+        ),
+    )
+    max_pairs: int = Field(
+        default=50,
+        ge=1,
+        le=200,
+        description="Máximo número de pares a evaluar en auto-contradicción",
     )
 
 
@@ -301,6 +365,168 @@ async def search_documents(
         }
         validate_tool_output("search_documents", error_result)
         return json.dumps(error_result)
+
+
+def _compute_hash(content: str) -> str:
+    """Genera un hash SHA256 del contenido para cache y evitar duplicados."""
+    import hashlib
+
+    return hashlib.sha256(content.encode("utf-8")).hexdigest()
+
+
+async def _search_duckduckgo(query: str, max_results: int, timeout: int) -> list[dict]:
+    """Busca usando DuckDuckGo (sin API key, con rate limiting).
+
+    duckduckgo_search v7.x es síncrono; ejecutamos en un hilo con
+    asyncio.to_thread() para no bloquear el event loop.
+    """
+    if not _HAS_DDGS:
+        raise ImportError(
+            "duckduckgo_search no está instalado. "
+            "Ejecuta: pip install duckduckgo_search"
+        )
+
+    try:
+        raw_results = await asyncio.to_thread(
+            _DDGS_CLASS().text,  # type: ignore[union-attr]
+            keywords=query,
+            max_results=max_results,
+        )
+    except Exception as e:
+        logger.warning("DuckDuckGo search falló: %s", e)
+        raise
+
+    results: list[dict] = []
+    for r in raw_results:
+        body = r.get("body", "") or ""
+        results.append(
+            {
+                "title": r.get("title", "") or "",
+                "url": r.get("href", "") or "",
+                "snippet": body[:300],
+                "content": body,
+                "source_type": "web",
+                "hash": _compute_hash(body),
+            }
+        )
+
+    return results[:max_results]
+
+
+async def _search_tavily(query: str, max_results: int, timeout: int) -> list[dict]:
+    """Busca usando Tavily API (requiere TAVILY_API_KEY)."""
+    api_key = settings.TAVILY_API_KEY or ""
+    if not api_key:
+        raise ValueError(
+            "TAVILY_API_KEY no configurada. "
+            "Establece TAVILY_API_KEY en .env para usar Tavily."
+        )
+
+    try:
+        from tavily import AsyncTavilyClient
+    except ImportError:
+        raise ImportError(
+            "tavily-python no está instalado. Ejecuta: pip install tavily-python"
+        )
+
+    client = AsyncTavilyClient(api_key=api_key)
+    response = await client.search(
+        query=query,
+        max_results=max_results,
+        search_depth="advanced",
+    )
+
+    results: list[dict] = []
+    for r in response.get("results", []):
+        content = r.get("content", "") or ""
+        results.append(
+            {
+                "title": r.get("title", "") or "",
+                "url": r.get("url", "") or "",
+                "snippet": content[:300],
+                "content": content,
+                "source_type": "web",
+                "hash": _compute_hash(content),
+            }
+        )
+
+    return results[:max_results]
+
+
+@tool(args_schema=WebSearchInput)
+async def search_web(
+    query: str,
+    max_results: int = 5,
+) -> str:
+    """Busca información actualizada en la web para validar datos,
+    enriquecer sugerencias y detectar contenido desactualizado.
+
+    Soporta dos proveedores (configurable vía WEB_SEARCH_PROVIDER):
+      - tavily: requiere TAVILY_API_KEY, más estable, ideal para RAG
+      - duckduckgo: no requiere API key, con rate limiting
+
+    Los resultados SIEMPRE se marcan como source_type="web" para
+    distinguirlos de fuentes documentales. NUNCA reemplazan el
+    contenido de los documentos subidos por el docente.
+
+    Args:
+        query: Consulta de búsqueda web.
+        max_results: Número máximo de resultados (1-20, default 5).
+    """
+    logger.info(
+        "🌐 search_web(query='%s', max_results=%d, provider=%s)",
+        query[:60],
+        max_results,
+        settings.WEB_SEARCH_PROVIDER,
+    )
+
+    provider = (settings.WEB_SEARCH_PROVIDER or "duckduckgo").strip().lower()
+    timeout = settings.WEB_SEARCH_TIMEOUT
+
+    try:
+        if provider == "tavily":
+            results = await asyncio.wait_for(
+                _search_tavily(query, max_results, timeout),
+                timeout=timeout,
+            )
+        else:
+            # Default: duckduckgo
+            results = await asyncio.wait_for(
+                _search_duckduckgo(query, max_results, timeout),
+                timeout=timeout,
+            )
+
+        result = {
+            "status": "success",
+            "query": query,
+            "results": results,
+            "total": len(results),
+            "provider": provider if provider == "tavily" else "duckduckgo",
+        }
+        validate_tool_output("search_web", result)
+        return json.dumps(result, ensure_ascii=False)
+
+    except asyncio.TimeoutError:
+        logger.error(
+            "🌐 search_web timeout después de %ds para query: %s", timeout, query[:60]
+        )
+        error_result = {
+            "status": "error",
+            "error": f"La búsqueda web excedió el timeout de {timeout}s",
+        }
+        validate_tool_output("search_web", error_result)
+        return json.dumps(error_result, ensure_ascii=False)
+
+    except ToolOutputValidationError:
+        raise
+    except Exception as e:
+        logger.exception("Error en search_web")
+        error_result = {
+            "status": "error",
+            "error": f"Error al buscar en web: {e}",
+        }
+        validate_tool_output("search_web", error_result)
+        return json.dumps(error_result, ensure_ascii=False)
 
 
 # ── Tool 2: compare_content ─────────────────────────────────────────────────
@@ -528,6 +754,7 @@ async def suggest_update(
     confidence_score: float,
     suggestion_type: str = "update",
     reasoning: str = "",
+    source_web_url: Optional[str] = None,
 ) -> str:
     """Crea una sugerencia en estado 'pending' para revisión humana.
 
@@ -561,6 +788,7 @@ async def suggest_update(
                 description=description,
                 source_doc_id=source_doc_id,
                 source_chunk_ids=source_chunk_ids,
+                source_web_url=source_web_url,
                 confidence_score=confidence_score,
                 reasoning=reasoning,
                 status=SuggestionStatus.pending,
@@ -578,6 +806,7 @@ async def suggest_update(
                 "state": "pending",
                 "source_doc_id": source_doc_id,
                 "source_chunk_ids": source_chunk_ids,
+                "source_web_url": source_web_url,
                 "confidence_score": confidence_score,
                 "message": "Sugerencia creada correctamente. Pendiente de revisión humana.",
             }
@@ -909,6 +1138,141 @@ async def detect_redundancy(
         return json.dumps(error_result)
 
 
+# ── Tool 8: detect_inconsistencies ────────────────────────────────────────────
+
+
+@tool(args_schema=DetectInconsistenciesInput)
+async def detect_inconsistencies(
+    doc_id: Optional[str] = None,
+    doc_ids: Optional[List[str]] = None,
+    max_pairs: int = 50,
+) -> str:
+    """Detecta inconsistencias internas y terminológicas en documentos.
+
+    Analiza cuatro tipos de inconsistencia:
+    - self_contradiction: Auto-contradicción dentro de un mismo documento
+    - terminology: Terminología inconsistente entre documentos
+    - numerical: Valores numéricos contradictorios
+    - structural: Inconsistencias de formato/estructura
+
+    Los subtipos self_contradiction y terminology requieren LLM.
+    Sin LLM configurado, solo se ejecutan numerical y structural.
+    """
+    logger.info(
+        "🔍 detect_inconsistencies(doc_id=%s, doc_ids=%s, max_pairs=%d)",
+        doc_id,
+        doc_ids,
+        max_pairs,
+    )
+
+    try:
+        from app.rag.inconsistencies import detect_all_inconsistencies
+
+        # Obtener chunks desde ChromaDB
+        chunks = await _load_chunks_for_inconsistency(doc_id, doc_ids)
+
+        if not chunks:
+            result = {
+                "status": "success",
+                "findings": [],
+                "total": 0,
+                "llm_used": False,
+            }
+            validate_tool_output("detect_inconsistencies", result)
+            return json.dumps(result, ensure_ascii=False)
+
+        # Verificar si hay LLM disponible
+        from app.agents.graph import get_llm
+
+        llm = get_llm()
+        enable_llm = llm is not None
+
+        findings, _ = await detect_all_inconsistencies(
+            chunks=chunks,
+            terminology_map=None,
+            enable_llm=enable_llm,
+            max_pairs=max_pairs,
+        )
+
+        result = {
+            "status": "success",
+            "findings": findings,
+            "total": len(findings),
+            "llm_used": enable_llm,
+        }
+        validate_tool_output("detect_inconsistencies", result)
+        return json.dumps(result, ensure_ascii=False)
+
+    except ToolOutputValidationError:
+        raise
+    except Exception as e:
+        logger.exception("Error en detect_inconsistencies")
+        error_result = {
+            "status": "error",
+            "error": f"Error al detectar inconsistencias: {e}",
+            "findings": [],
+        }
+        validate_tool_output("detect_inconsistencies", error_result)
+        return json.dumps(error_result)
+
+
+async def _load_chunks_for_inconsistency(
+    doc_id: Optional[str] = None,
+    doc_ids: Optional[List[str]] = None,
+) -> List[dict]:
+    """Carga chunks desde ChromaDB para el análisis de inconsistencias."""
+    try:
+        collection = _get_chroma_collection()
+        if collection is None:
+            logger.warning("ChromaDB collection no disponible")
+            return []
+
+        # Construir filtro de metadatos
+        where_filter = None
+        target_ids = []
+
+        if doc_ids:
+            target_ids = doc_ids
+        elif doc_id:
+            target_ids = [doc_id]
+
+        if target_ids:
+            where_filter = {"doc_id": {"$in": target_ids}}
+
+        all_chunks = collection.get(
+            where=where_filter,
+            include=["metadatas", "documents", "embeddings"],
+        )
+
+        if not all_chunks or not all_chunks.get("ids"):
+            logger.info("  ℹ️  No se encontraron chunks para los documentos indicados")
+            return []
+
+        chunks = []
+        for i, chroma_id in enumerate(all_chunks["ids"]):
+            metadata = all_chunks["metadatas"][i] if all_chunks.get("metadatas") else {}
+            doc_text = all_chunks["documents"][i] if all_chunks.get("documents") else ""
+            embedding = (
+                all_chunks["embeddings"][i] if all_chunks.get("embeddings") else None
+            )
+
+            chunk = {
+                "chroma_id": chroma_id,
+                "doc_id": metadata.get("doc_id", ""),
+                "text": doc_text,
+                "content": doc_text,
+                "embedding": embedding,
+                "chunk_index": metadata.get("chunk_index", 0),
+            }
+            chunks.append(chunk)
+
+        return chunks
+
+    except Exception as e:
+        logger.error("Error cargando chunks para inconsistencia: %s", e)
+        return []
+
+
 # ── Registro de tools ────────────────────────────────────────────────────────
 
 
@@ -922,6 +1286,8 @@ def get_all_tools() -> list:
         generate_faq_entry,
         log_action,
         detect_redundancy,
+        detect_inconsistencies,
+        search_web,
     ]
 
 

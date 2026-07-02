@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import {
   CheckSquare,
   CheckCircle2,
@@ -7,7 +8,6 @@ import {
   Loader2,
   X,
   FileText,
-  Brain,
   ChevronDown,
   ChevronUp,
   ScrollText,
@@ -16,8 +16,10 @@ import {
   getSuggestions,
   approveSuggestion,
   rejectSuggestion,
+  getDocs,
 } from "../api/docs";
-import type { Suggestion } from "../api/docs";
+import type { Suggestion, Document } from "../api/docs";
+import SuggestionModal from "../components/SuggestionModal";
 
 const TYPE_LABEL: Record<string, { label: string; color: string }> = {
   redundancy: {
@@ -28,7 +30,15 @@ const TYPE_LABEL: Record<string, { label: string; color: string }> = {
     label: "Conflicto",
     color: "bg-red-100 text-red-800 border-red-200",
   },
+  inconsistency: {
+    label: "Inconsistencia",
+    color: "bg-orange-100 text-orange-800 border-orange-200",
+  },
   faq: { label: "FAQ", color: "bg-blue-100 text-blue-800 border-blue-200" },
+  update: {
+    label: "Actualización",
+    color: "bg-purple-100 text-purple-800 border-purple-200",
+  },
 };
 
 const STATUS_BADGE: Record<
@@ -52,6 +62,22 @@ const STATUS_BADGE: Record<
   },
 };
 
+const TYPE_OPTIONS = [
+  { value: "", label: "Todos" },
+  { value: "redundancy", label: "Redundancia" },
+  { value: "conflict", label: "Conflicto" },
+  { value: "inconsistency", label: "Inconsistencia" },
+  { value: "faq", label: "FAQ" },
+  { value: "update", label: "Actualización" },
+];
+
+const STATUS_OPTIONS = [
+  { value: "pending", label: "Pendientes" },
+  { value: "approved", label: "Aprobadas" },
+  { value: "rejected", label: "Rechazadas" },
+  { value: "", label: "Todas" },
+];
+
 function fmtDate(d: string) {
   return new Intl.DateTimeFormat("es", {
     dateStyle: "medium",
@@ -64,12 +90,20 @@ function fmtConfidence(score: number) {
 }
 
 export default function Review() {
+  const [searchParams, setSearchParams] = useSearchParams();
+
+  const statusFilter = searchParams.get("status") ?? "pending";
+  const typeFilter = searchParams.get("type") ?? "";
+  const docFilter = searchParams.get("doc_id") ?? "";
+
   const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
   const [loading, setLoading] = useState(true);
-  const [filter, setFilter] = useState<string>("pending");
+  const [documents, setDocuments] = useState<Document[]>([]);
   const [rejectModal, setRejectModal] = useState<{ id: string; open: boolean }>(
     { id: "", open: false },
   );
+  const [selectedSuggestion, setSelectedSuggestion] =
+    useState<Suggestion | null>(null);
   const [rejectReason, setRejectReason] = useState("");
   const [rejecting, setRejecting] = useState(false);
   const [actionLoading, setActionLoading] = useState<
@@ -79,13 +113,30 @@ export default function Review() {
     Record<string, boolean>
   >({});
 
+  // ── Load documents for filter dropdown ──────────────────────────────────
+  useEffect(() => {
+    let cancelled = false;
+    getDocs()
+      .then(({ data }) => {
+        if (!cancelled) setDocuments(data.items);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // ── Load suggestions ────────────────────────────────────────────────────
   useEffect(() => {
     let cancelled = false;
 
     const load = async () => {
+      setLoading(true);
       try {
         const params: Record<string, string> = {};
-        if (filter !== "all") params.status = filter;
+        if (statusFilter) params.status = statusFilter;
+        if (typeFilter) params.type = typeFilter;
+        if (docFilter) params.document_id = docFilter;
         const { data } = await getSuggestions(params);
         if (!cancelled) setSuggestions(data.items);
       } catch {
@@ -99,8 +150,22 @@ export default function Review() {
     return () => {
       cancelled = true;
     };
-  }, [filter]);
+  }, [statusFilter, typeFilter, docFilter]);
 
+  // ── Update URL helpers ──────────────────────────────────────────────────
+  const setFilter = (key: string, value: string) => {
+    setSearchParams((prev) => {
+      const next = new URLSearchParams(prev);
+      if (value) {
+        next.set(key, value);
+      } else {
+        next.delete(key);
+      }
+      return next;
+    });
+  };
+
+  // ── Actions ─────────────────────────────────────────────────────────────
   const handleApprove = async (id: string) => {
     setActionLoading((p) => ({ ...p, [id]: "approve" }));
     try {
@@ -144,6 +209,7 @@ export default function Review() {
     }
   };
 
+  // ── Loading state ───────────────────────────────────────────────────────
   if (loading) {
     return (
       <div className="flex items-center justify-center h-64 text-gray-400 gap-2">
@@ -157,31 +223,73 @@ export default function Review() {
 
   return (
     <div className="space-y-4">
-      {/* Filters */}
-      <div className="flex items-center justify-between flex-wrap gap-3">
-        <div className="flex items-center gap-2">
-          {["pending", "approved", "rejected", "all"].map((f) => (
+      {/* ── Filters ──────────────────────────────────────────────────── */}
+      <div className="flex flex-wrap items-center gap-3">
+        {/* Status filter */}
+        <div className="flex items-center gap-1.5">
+          <span className="text-xs font-medium text-gray-500 mr-1">
+            Estado:
+          </span>
+          {STATUS_OPTIONS.map((opt) => (
             <button
-              key={f}
-              onClick={() => setFilter(f)}
+              key={opt.value}
+              onClick={() => setFilter("status", opt.value)}
               className={`text-xs font-medium px-3 py-1.5 rounded-full border transition-colors ${
-                filter === f
+                statusFilter === opt.value
                   ? "bg-violet-600 text-white border-violet-600"
                   : "bg-white text-gray-600 border-gray-200 hover:border-violet-300"
               }`}
             >
-              {f === "pending"
-                ? "Pendientes"
-                : f === "approved"
-                  ? "Aprobadas"
-                  : f === "rejected"
-                    ? "Rechazadas"
-                    : "Todas"}
+              {opt.label}
             </button>
           ))}
         </div>
-        <p className="text-sm text-gray-500">
-          {suggestions.length} sugerencia{suggestions.length !== 1 ? "s" : ""}
+
+        <div className="w-px h-6 bg-gray-200" />
+
+        {/* Type filter */}
+        <div className="flex items-center gap-1.5">
+          <span className="text-xs font-medium text-gray-500 mr-1">Tipo:</span>
+          {TYPE_OPTIONS.map((opt) => (
+            <button
+              key={opt.value}
+              onClick={() => setFilter("type", opt.value)}
+              className={`text-xs font-medium px-3 py-1.5 rounded-full border transition-colors ${
+                typeFilter === opt.value
+                  ? "bg-violet-600 text-white border-violet-600"
+                  : "bg-white text-gray-600 border-gray-200 hover:border-violet-300"
+              }`}
+            >
+              {opt.label}
+            </button>
+          ))}
+        </div>
+
+        <div className="w-px h-6 bg-gray-200" />
+
+        {/* Document filter */}
+        <div className="flex items-center gap-1.5">
+          <span className="text-xs font-medium text-gray-500 mr-1">
+            Documento:
+          </span>
+          <select
+            value={docFilter}
+            onChange={(e) => setFilter("doc_id", e.target.value)}
+            className="text-xs border border-gray-200 rounded-lg px-2.5 py-1.5 bg-white text-gray-700 focus:outline-none focus:ring-2 focus:ring-violet-400 focus:border-transparent"
+          >
+            <option value="">Todos los documentos</option>
+            {documents.map((doc) => (
+              <option key={doc.id} value={doc.id}>
+                {doc.filename}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        {/* Count */}
+        <p className="text-sm text-gray-500 ml-auto">
+          {suggestions.length} sugerencia
+          {suggestions.length !== 1 ? "s" : ""}
           {pendingCount > 0 && (
             <span className="text-yellow-600 ml-1">
               ({pendingCount} pendientes)
@@ -190,6 +298,7 @@ export default function Review() {
         </p>
       </div>
 
+      {/* ── Empty state ──────────────────────────────────────────────── */}
       {suggestions.length === 0 ? (
         <div className="flex flex-col items-center justify-center h-64 text-center">
           <div className="w-14 h-14 bg-gray-100 rounded-2xl flex items-center justify-center mb-4">
@@ -197,12 +306,11 @@ export default function Review() {
           </div>
           <p className="text-gray-600 font-medium">No hay sugerencias</p>
           <p className="text-sm text-gray-400 mt-1">
-            {filter === "pending"
-              ? "No hay sugerencias pendientes de revisión"
-              : `No hay sugerencias con el filtro seleccionado`}
+            No hay sugerencias con los filtros seleccionados
           </p>
         </div>
       ) : (
+        /* ── Suggestions list ──────────────────────────────────────────── */
         <div className="space-y-3">
           {suggestions.map((s) => {
             const typeStyle = TYPE_LABEL[s.type] ?? TYPE_LABEL.redundancy;
@@ -227,6 +335,25 @@ export default function Review() {
                       >
                         {typeStyle.label}
                       </span>
+                      {/* Severity badge for conflict/inconsistency types */}
+                      {(s.type === "conflict" || s.type === "inconsistency") &&
+                        s.confidence_score != null && (
+                          <span
+                            className={`inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full border ${
+                              s.confidence_score >= 0.8
+                                ? "bg-red-100 text-red-700 border-red-200"
+                                : s.confidence_score >= 0.6
+                                  ? "bg-yellow-100 text-yellow-700 border-yellow-200"
+                                  : "bg-gray-100 text-gray-600 border-gray-200"
+                            }`}
+                          >
+                            {s.confidence_score >= 0.8
+                              ? "🔴 Alta"
+                              : s.confidence_score >= 0.6
+                                ? "🟡 Media"
+                                : "⚪ Baja"}
+                          </span>
+                        )}
                       <span
                         className={`inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full border ${statusStyle.color}`}
                       >
@@ -241,7 +368,6 @@ export default function Review() {
                           {s.document_name}
                         </span>
                       )}
-                      {/* #61 — Badge de fuente de referencia */}
                       {s.source_type === "reference" && (
                         <span
                           className="inline-flex items-center gap-1 text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-800 cursor-help"
@@ -250,15 +376,31 @@ export default function Review() {
                           📚 Fuente: Referencia
                         </span>
                       )}
+                      {s.source_web_url && (
+                        <a
+                          href={s.source_web_url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="inline-flex items-center gap-1 text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-sky-100 text-sky-800 hover:bg-sky-200 transition-colors"
+                          title="Esta sugerencia se apoya en una fuente web"
+                        >
+                          🌐 Fuente Web
+                        </a>
+                      )}
                       <span className="text-xs text-gray-400">
                         {fmtDate(s.created_at)}
                       </span>
                     </div>
 
-                    {/* Description */}
-                    <p className="text-sm text-gray-800 leading-relaxed">
-                      {s.description}
-                    </p>
+                    {/* Description — clickable to open modal */}
+                    <button
+                      onClick={() => setSelectedSuggestion(s)}
+                      className="text-left w-full"
+                    >
+                      <p className="text-sm text-gray-800 leading-relaxed">
+                        {s.description}
+                      </p>
+                    </button>
 
                     {/* Confidence + Reasoning */}
                     <div className="flex items-center gap-3 mt-2">
@@ -266,19 +408,28 @@ export default function Review() {
                         Confianza: {fmtConfidence(s.confidence_score)}
                       </span>
                       {s.reasoning && (
-                        <span className="flex items-center gap-1 text-xs text-gray-400">
-                          <Brain className="w-3 h-3" />
-                          <button
-                            className="hover:text-violet-600 underline decoration-dotted"
-                            title={s.reasoning}
-                          >
-                            Ver razonamiento
-                          </button>
-                        </span>
+                        <button
+                          onClick={() => setSelectedSuggestion(s)}
+                          className="flex items-center gap-1 text-xs text-gray-400 hover:text-violet-600 underline decoration-dotted"
+                        >
+                          <span>Ver razonamiento completo</span>
+                        </button>
                       )}
+                      {/* Botón Ver contexto completo para inconsistencias */}
+                      {(s.type === "conflict" || s.type === "inconsistency") &&
+                        s.source_chunks &&
+                        s.source_chunks.length > 0 && (
+                          <a
+                            href={`/docs/${s.document_id}`}
+                            className="flex items-center gap-1 text-xs text-gray-400 hover:text-blue-600 underline decoration-dotted"
+                          >
+                            <FileText className="w-3 h-3" />
+                            <span>Ver contexto completo</span>
+                          </a>
+                        )}
                     </div>
 
-                    {/* #33 — Evidence: original chunk content */}
+                    {/* Evidence */}
                     {s.source_chunks && s.source_chunks.length > 0 && (
                       <div className="mt-3">
                         <button
@@ -346,7 +497,10 @@ export default function Review() {
                         </span>
                       ) : (
                         <button
-                          onClick={() => handleApprove(s.id)}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleApprove(s.id);
+                          }}
                           className="w-8 h-8 flex items-center justify-center rounded-lg bg-green-50 text-green-600 hover:bg-green-100 transition-colors"
                           title="Aprobar"
                         >
@@ -359,7 +513,10 @@ export default function Review() {
                         </span>
                       ) : (
                         <button
-                          onClick={() => openRejectModal(s.id)}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            openRejectModal(s.id);
+                          }}
                           className="w-8 h-8 flex items-center justify-center rounded-lg bg-red-50 text-red-600 hover:bg-red-100 transition-colors"
                           title="Rechazar"
                         >
@@ -390,7 +547,15 @@ export default function Review() {
         </div>
       )}
 
-      {/* Reject modal */}
+      {/* ── Suggestion detail modal ───────────────────────────────────── */}
+      {selectedSuggestion && (
+        <SuggestionModal
+          suggestion={selectedSuggestion}
+          onClose={() => setSelectedSuggestion(null)}
+        />
+      )}
+
+      {/* ── Reject modal ─────────────────────────────────────────────── */}
       {rejectModal.open && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
           <div

@@ -1,33 +1,19 @@
-services:
-  api:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    ports:
-      - "8000:8000"
-    env_file: .env
-    environment:
-      # Docker overrides — inside the compose network, service names resolve
-      # instead of "localhost", and container-internal ports differ.
-      - CHROMADB_HOST=chromadb
-      - CHROMADB_PORT=8000
-      - LANGFUSE_HOST=http://langfuse:3000
-    volumes:
-      - ./data:/app/data
-      - ./backend/alembic:/app/alembic
-    depends_on:
-      db:
-        condition: service_healthy
-      chromadb:
-        condition: service_healthy
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "curl", "-sf", "http://localhost:8000/health"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 15s
+# ── Educurator ─────────────────────────────────────────────────────────────
+#
+# Modos de uso:
+#
+#   1) Solo infraestructura (db, chromadb, langfuse)
+#      El frontend y backend se ejecutan en local a través de la terminal.
+#
+#        docker compose up -d
+#
+#   2) Stack completo (infra + api)
+#
+#        docker compose --profile full up -d
+#
+# ────────────────────────────────────────────────────────────────────────────
 
+services:
   db:
     image: postgres:16-alpine
     environment:
@@ -35,10 +21,10 @@ services:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
     ports:
-      - "${HOST_DB_PORT:-5432}:5432"
+      # 5434 por defecto para no colisionar con instalaciones locales de Postgres
+      - "${HOST_DB_PORT:-5434}:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
-      # Init scripts to create additional databases (e.g. langfuse)
       - ./docker/postgres/init:/docker-entrypoint-initdb.d
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres -d educurator"]
@@ -53,7 +39,6 @@ services:
       - "8001:8000"
     volumes:
       - chroma_data:/chroma/chroma
-    restart: unless-stopped
     healthcheck:
       test:
         [
@@ -66,6 +51,7 @@ services:
       timeout: 5s
       retries: 5
       start_period: 15s
+    restart: unless-stopped
 
   langfuse:
     image: langfuse/langfuse:2
@@ -95,6 +81,38 @@ services:
       timeout: 5s
       retries: 5
       start_period: 20s
+
+  api:
+    profiles: ["full"]
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
+    env_file: .env
+    # Overrides para que el contenedor se conecte a los servicios por su
+    # nombre interno de red, ignorando los valores de .env (que apuntan a
+    # localhost para ejecución local).
+    environment:
+      DATABASE_URL: postgresql+asyncpg://postgres:postgres@db:5432/educurator
+      CHROMADB_HOST: chromadb
+      CHROMADB_PORT: 8000
+      LANGFUSE_HOST: http://langfuse:3000
+    volumes:
+      - ./data:/app/data
+      - ./backend/alembic:/app/alembic
+    depends_on:
+      db:
+        condition: service_healthy
+      chromadb:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
 
 volumes:
   postgres_data:

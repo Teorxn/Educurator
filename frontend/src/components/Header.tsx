@@ -10,6 +10,14 @@ const TITLES: Record<string, string> = {
   "/reference-docs": "Documentos de referencia",
 };
 
+function deriveTitle(pathname: string): string {
+  // Check exact match first
+  if (TITLES[pathname]) return TITLES[pathname];
+  // Dynamic routes
+  if (pathname.startsWith("/docs/")) return "Detalle del documento";
+  return "Dashboard";
+}
+
 interface HeaderProps {
   onMenuClick: () => void;
 }
@@ -17,7 +25,7 @@ interface HeaderProps {
 export default function Header({ onMenuClick }: HeaderProps) {
   const navigate = useNavigate();
   const { pathname } = useLocation();
-  const title = TITLES[pathname] ?? "Dashboard";
+  const title = deriveTitle(pathname);
 
   const handleLogout = () => {
     localStorage.removeItem("access_token");

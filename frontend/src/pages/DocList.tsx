@@ -26,31 +26,59 @@ export default function DocList() {
   const [loading, setLoading] = useState(true);
   const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  const fetchDocs = async (isFirstLoad = false) => {
-    try {
-      const { data } = await getDocs();
-      const sorted = [...data.items].sort(
-        (a, b) =>
-          new Date(b.uploaded_at).getTime() - new Date(a.uploaded_at).getTime(),
-      );
-      setDocs(sorted);
-
-      const hasProcessing = data.items.some((d) => d.status === "processing");
-      if (!hasProcessing && pollingRef.current) {
-        clearInterval(pollingRef.current);
-        pollingRef.current = null;
-      }
-    } catch {
-      // silent fail on background polls
-    } finally {
-      if (isFirstLoad) setLoading(false);
-    }
-  };
-
   useEffect(() => {
-    fetchDocs(true);
-    pollingRef.current = setInterval(() => fetchDocs(false), 5000);
+    let cancelled = false;
+
+    const load = async () => {
+      try {
+        const { data } = await getDocs();
+        if (cancelled) return;
+        const sorted = [...data.items].sort(
+          (a, b) =>
+            new Date(b.uploaded_at).getTime() -
+            new Date(a.uploaded_at).getTime(),
+        );
+        setDocs(sorted);
+
+        const hasProcessing = data.items.some((d) => d.status === "processing");
+        if (!hasProcessing && pollingRef.current) {
+          clearInterval(pollingRef.current);
+          pollingRef.current = null;
+        }
+      } catch {
+        // silent fail on background polls
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    load();
+    pollingRef.current = setInterval(
+      () =>
+        getDocs()
+          .then(({ data }) => {
+            if (cancelled) return;
+            const sorted = [...data.items].sort(
+              (a, b) =>
+                new Date(b.uploaded_at).getTime() -
+                new Date(a.uploaded_at).getTime(),
+            );
+            setDocs(sorted);
+
+            const hasProcessing = data.items.some(
+              (d) => d.status === "processing",
+            );
+            if (!hasProcessing && pollingRef.current) {
+              clearInterval(pollingRef.current);
+              pollingRef.current = null;
+            }
+          })
+          .catch(() => {}),
+      5000,
+    );
+
     return () => {
+      cancelled = true;
       if (pollingRef.current) clearInterval(pollingRef.current);
     };
   }, []);
@@ -126,7 +154,11 @@ export default function DocList() {
           </thead>
           <tbody className="divide-y divide-gray-50">
             {docs.map((doc) => (
-              <tr key={doc.id} className="hover:bg-gray-50 transition-colors">
+              <tr
+                key={doc.id}
+                onClick={() => navigate(`/docs/${doc.id}`)}
+                className="hover:bg-gray-50 transition-colors cursor-pointer"
+              >
                 <td className="px-4 py-3">
                   <div className="flex items-center gap-2">
                     <span className="text-base">

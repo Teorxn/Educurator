@@ -41,6 +41,29 @@ class DocHistoryListResponse(BaseModel):
     total: int
 
 
+class ChunkResponse(BaseModel):
+    chunk_index: int
+    content: str
+    token_count: int
+    page_number: int | None = None
+
+
+class DocContentResponse(BaseModel):
+    id: uuid.UUID
+    filename: str
+    original_filename: str
+    file_type: str
+    status: DocumentStatus
+    category: DocumentCategory = DocumentCategory.curated
+    size_bytes: int
+    uploaded_at: datetime
+    updated_at: datetime | None = None
+    content: str = ""
+    chunks: list[ChunkResponse] = []
+
+    model_config = {"from_attributes": True}
+
+
 class PatchDocumentRequest(BaseModel):
     status: DocumentStatus | None = None
     reason: str | None = None

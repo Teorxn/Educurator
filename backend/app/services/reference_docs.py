@@ -15,7 +15,6 @@ from pathlib import Path
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.config import settings
 from app.database import AsyncSessionLocal
 from app.models.models import Document, DocumentCategory, DocumentChunk, DocumentStatus
 from app.rag.embeddings import chunk_and_embed as embed_chunks

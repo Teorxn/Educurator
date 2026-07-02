@@ -1,0 +1,292 @@
+%PDF-1.4
+%ÿÿÿÿ
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R >>
+endobj
+2 0 obj
+<< /Type /Pages /Kids [4 0 R 5 0 R 6 0 R 7 0 R 8 0 R] /Count 5 >>
+endobj
+3 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>
+endobj
+4 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 9 0 R /Resources << /Font << /F1 3 0 R >> >> >>
+endobj
+5 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 10 0 R /Resources << /Font << /F1 3 0 R >> >> >>
+endobj
+6 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 11 0 R /Resources << /Font << /F1 3 0 R >> >> >>
+endobj
+7 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 12 0 R /Resources << /Font << /F1 3 0 R >> >> >>
+endobj
+8 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 13 0 R /Resources << /Font << /F1 3 0 R >> >> >>
+endobj
+9 0 obj
+<< /Length 876 >>
+stream
+BT
+/F1 14 Tf
+72 760 Td
+(UNIVERSIDAD NACIONAL DE EDUCACION) Tj
+/F1 16 Tf
+72 730 Td
+(Introduccion al Algebra) Tj
+/F1 11 Tf
+72 710 Td
+() Tj
+/F1 11 Tf
+72 690 Td
+(El algebra es una rama de las matematicas que estudia las) Tj
+/F1 11 Tf
+72 674 Td
+(estructuras, las relaciones y las cantidades. Utiliza simbolos) Tj
+/F1 11 Tf
+72 658 Td
+(y letras para representar numeros y cantidades en formulas y) Tj
+/F1 11 Tf
+72 642 Td
+(ecuaciones. Es una herramienta fundamental para resolver) Tj
+/F1 11 Tf
+72 626 Td
+(problemas complejos en diversas areas del conocimiento.) Tj
+/F1 11 Tf
+72 606 Td
+() Tj
+/F1 11 Tf
+72 590 Td
+(Los conceptos basicos incluyen variables, constantes,) Tj
+/F1 11 Tf
+72 574 Td
+(expresiones algebraicas y operaciones fundamentales.) Tj
+/F1 11 Tf
+72 558 Td
+(Una variable es un simbolo que representa un valor) Tj
+/F1 11 Tf
+72 542 Td
+(desconocido o que puede cambiar.) Tj
+ET
+endstream
+endobj
+10 0 obj
+<< /Length 830 >>
+stream
+BT
+/F1 16 Tf
+72 760 Td
+(Ecuaciones Lineales) Tj
+/F1 11 Tf
+72 735 Td
+() Tj
+/F1 11 Tf
+72 715 Td
+(Una ecuacion lineal es una igualdad matematica entre dos) Tj
+/F1 11 Tf
+72 699 Td
+(expresiones algebraicas. Se denomina lineal porque las) Tj
+/F1 11 Tf
+72 683 Td
+(variables involucradas tienen exponente igual a 1.) Tj
+/F1 11 Tf
+72 663 Td
+() Tj
+/F1 11 Tf
+72 647 Td
+(Forma general: ax + b = 0, donde a y b son constantes) Tj
+/F1 11 Tf
+72 631 Td
+(y a es diferente de cero. La solucion es x = -b/a.) Tj
+/F1 11 Tf
+72 611 Td
+() Tj
+/F1 11 Tf
+72 595 Td
+(Las ecuaciones lineales se utilizan para modelar) Tj
+/F1 11 Tf
+72 579 Td
+(situaciones del mundo real como calculo de distancias,) Tj
+/F1 11 Tf
+72 563 Td
+(costos, velocidades y muchas otras aplicaciones.) Tj
+/F1 11 Tf
+72 543 Td
+() Tj
+/F1 11 Tf
+72 527 Td
+(Ejemplo: 2x + 4 = 10 => x = 3) Tj
+ET
+endstream
+endobj
+11 0 obj
+<< /Length 825 >>
+stream
+BT
+/F1 16 Tf
+72 760 Td
+(Teorema de Pitagoras) Tj
+/F1 11 Tf
+72 735 Td
+() Tj
+/F1 11 Tf
+72 715 Td
+(El Teorema de Pitagoras es uno de los teoremas fundamentales) Tj
+/F1 11 Tf
+72 699 Td
+(de la geometria. Establece una relacion entre los tres lados) Tj
+/F1 11 Tf
+72 683 Td
+(de un triangulo rectangulo.) Tj
+/F1 11 Tf
+72 663 Td
+() Tj
+/F1 11 Tf
+72 647 Td
+(En todo triangulo rectangulo, el cuadrado de la hipotenusa) Tj
+/F1 11 Tf
+72 631 Td
+(es igual a la suma de los cuadrados de los catetos.) Tj
+/F1 11 Tf
+72 611 Td
+() Tj
+/F1 11 Tf
+72 595 Td
+(Formula: c^2 = a^2 + b^2) Tj
+/F1 11 Tf
+72 579 Td
+(donde c es la hipotenusa y a, b son los catetos.) Tj
+/F1 11 Tf
+72 559 Td
+() Tj
+/F1 11 Tf
+72 543 Td
+(Este teorema tiene numerosas aplicaciones en arquitectura,) Tj
+/F1 11 Tf
+72 527 Td
+(navegacion, topografia y muchas otras disciplinas.) Tj
+ET
+endstream
+endobj
+12 0 obj
+<< /Length 914 >>
+stream
+BT
+/F1 16 Tf
+72 760 Td
+(Funciones y Graficas) Tj
+/F1 11 Tf
+72 735 Td
+() Tj
+/F1 11 Tf
+72 715 Td
+(Una funcion es una regla de correspondencia entre dos) Tj
+/F1 11 Tf
+72 699 Td
+(conjuntos, donde a cada elemento del conjunto de partida) Tj
+/F1 11 Tf
+72 683 Td
+(le corresponde un unico elemento del conjunto de llegada.) Tj
+/F1 11 Tf
+72 663 Td
+() Tj
+/F1 11 Tf
+72 647 Td
+(La notacion mas comun es f\(x\) = y, donde x es la variable) Tj
+/F1 11 Tf
+72 631 Td
+(independiente e y es la variable dependiente.) Tj
+/F1 11 Tf
+72 611 Td
+() Tj
+/F1 11 Tf
+72 595 Td
+(Las funciones pueden representarse graficamente en el plano) Tj
+/F1 11 Tf
+72 579 Td
+(cartesiano, permitiendo visualizar el comportamiento de la) Tj
+/F1 11 Tf
+72 563 Td
+(relacion entre las variables.) Tj
+/F1 11 Tf
+72 543 Td
+() Tj
+/F1 11 Tf
+72 527 Td
+(Tipos comunes: lineales, cuadraticas, exponenciales,) Tj
+/F1 11 Tf
+72 511 Td
+(logaritmicas y trigonometricas.) Tj
+ET
+endstream
+endobj
+13 0 obj
+<< /Length 881 >>
+stream
+BT
+/F1 16 Tf
+72 760 Td
+(Estadistica Basica) Tj
+/F1 11 Tf
+72 735 Td
+() Tj
+/F1 11 Tf
+72 715 Td
+(La estadistica es la ciencia que se ocupa de recopilar,) Tj
+/F1 11 Tf
+72 699 Td
+(organizar, analizar e interpretar datos para tomar decisiones) Tj
+/F1 11 Tf
+72 683 Td
+(informadas en presencia de incertidumbre.) Tj
+/F1 11 Tf
+72 663 Td
+() Tj
+/F1 11 Tf
+72 647 Td
+(Medidas de tendencia central: la media aritmetica, la mediana) Tj
+/F1 11 Tf
+72 631 Td
+(y la moda son valores que resumen un conjunto de datos.) Tj
+/F1 11 Tf
+72 611 Td
+() Tj
+/F1 11 Tf
+72 595 Td
+(Medidas de dispersion: la varianza y la desviacion estandar) Tj
+/F1 11 Tf
+72 579 Td
+(indican cuan dispersos estan los datos respecto a la media.) Tj
+/F1 11 Tf
+72 559 Td
+() Tj
+/F1 11 Tf
+72 543 Td
+(La probabilidad estudia la ocurrencia de eventos aleatorios) Tj
+/F1 11 Tf
+72 527 Td
+(y es la base para la inferencia estadistica.) Tj
+ET
+endstream
+endobj
+xref
+0 14
+0000000000 65535 f 
+0000000015 00000 n 
+0000000064 00000 n 
+0000000145 00000 n 
+0000000215 00000 n 
+0000000341 00000 n 
+0000000468 00000 n 
+0000000595 00000 n 
+0000000722 00000 n 
+0000000849 00000 n 
+0000001776 00000 n 
+0000002658 00000 n 
+0000003535 00000 n 
+0000004501 00000 n 
+trailer
+<< /Size 14 /Root 1 0 R >>
+startxref
+5434
+%%EOF

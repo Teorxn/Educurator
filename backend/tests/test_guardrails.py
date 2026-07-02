@@ -32,6 +32,8 @@ class TestSchemasRegistered:
             "generate_faq_entry",
             "log_action",
             "detect_redundancy",
+            "detect_inconsistencies",
+            "search_web",
         }
 
     def test_each_schema_is_valid_pydantic_type(self):
@@ -549,3 +551,94 @@ class TestValidateRedundancyFinding:
         with pytest.raises(SuggestionDataValidationError) as exc:
             validate_redundancy_finding(finding)
         assert "similarity" in str(exc.value)
+
+
+class TestSearchWebGuardrails:
+    """Validación del schema de search_web."""
+
+    TOOL = "search_web"
+
+    def test_search_web_success_schema(self):
+        """Output exitoso debe pasar validación."""
+        output = {
+            "status": "success",
+            "query": "teorema de pitágoras",
+            "results": [
+                {
+                    "title": "Teorema de Pitágoras",
+                    "url": "https://example.com/pitagoras",
+                    "snippet": "El teorema de Pitágoras...",
+                    "content": "Contenido completo del artículo",
+                    "source_type": "web",
+                    "hash": "abc123def456",
+                }
+            ],
+            "total": 1,
+            "provider": "duckduckgo",
+        }
+        result = validate_tool_output(self.TOOL, output)
+        assert result["status"] == "success"
+
+    def test_search_web_error_schema(self):
+        """Output de error debe pasar validación."""
+        output = {
+            "status": "error",
+            "error": "Error de conexión",
+        }
+        result = validate_tool_output(self.TOOL, output)
+        assert result["status"] == "error"
+
+    def test_search_web_result_must_have_source_type_web(self):
+        """Cada resultado debe tener source_type='web'."""
+        with pytest.raises(ToolOutputValidationError) as exc:
+            validate_tool_output(
+                self.TOOL,
+                {
+                    "status": "success",
+                    "query": "test",
+                    "results": [
+                        {
+                            "title": "Test",
+                            "url": "https://example.com",
+                            "snippet": "Snippet",
+                            "content": "Content",
+                            "source_type": "document",  # Inválido: debe ser "web"
+                            "hash": "abc123",
+                        }
+                    ],
+                    "total": 1,
+                    "provider": "duckduckgo",
+                },
+            )
+        assert "source_type" in str(exc.value)
+
+    def test_search_web_rejects_extra_fields(self):
+        """No debe aceptar campos no declarados (extra='forbid')."""
+        with pytest.raises(ToolOutputValidationError) as exc:
+            validate_tool_output(
+                self.TOOL,
+                {
+                    "status": "success",
+                    "query": "test",
+                    "results": [],
+                    "total": 0,
+                    "provider": "duckduckgo",
+                    "extra_field": "no_deberia_existir",
+                },
+            )
+        assert "extra_field" in str(exc.value)
+
+    def test_search_web_rejects_wrong_provider(self):
+        """Provider debe ser 'tavily' o 'duckduckgo'."""
+        with pytest.raises(ToolOutputValidationError) as exc:
+            validate_tool_output(
+                self.TOOL,
+                {
+                    "status": "success",
+                    "query": "test",
+                    "results": [],
+                    "total": 0,
+                    "provider": "google",
+                },
+            )
+        assert "provider" in str(exc.value)

@@ -159,6 +159,7 @@ class Suggestion(Base):
     description: Mapped[str] = mapped_column(Text, nullable=False)
     source_doc_id: Mapped[str] = mapped_column(String(255), nullable=False, default="")
     source_chunk_ids: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    source_web_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     confidence_score: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
     reasoning: Mapped[str | None] = mapped_column(Text, nullable=True)
     status: Mapped[SuggestionStatus] = mapped_column(

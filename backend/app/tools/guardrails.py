@@ -36,6 +36,13 @@ __all__ = [
     "validate_tool_output",
     "validate_suggestion_data",
     "validate_redundancy_finding",
+    "validate_inconsistency_finding",
+    "InconsistencyFinding",
+    "DetectInconsistenciesSuccess",
+    "DetectInconsistenciesError",
+    "WebSearchResult",
+    "SearchWebSuccess",
+    "SearchWebError",
     "TOOL_OUTPUT_SCHEMAS",
 ]
 
@@ -173,6 +180,7 @@ class SuggestUpdateSuccess(BaseModel):
     state: Literal["pending"]
     source_doc_id: str = Field(min_length=1)
     source_chunk_ids: List[str] = Field(min_length=1)
+    source_web_url: Optional[str] = None
     confidence_score: float = Field(ge=0.0, le=1.0)
     message: str
 
@@ -246,6 +254,45 @@ class LogActionError(BaseModel):
     error: str
 
 
+# ── Tool 8: detect_inconsistencies ────────────────────────────────────
+
+
+class _InconsistencyFinding(BaseModel):
+    """Hallazgo individual de inconsistencia."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["self_contradiction", "terminology", "numerical", "structural"]
+    severity: Literal["high", "medium", "low"]
+    chunk_id_a: str
+    chunk_id_b: str = Field(default="", description="Vacío si es intra-chunk")
+    doc_id_a: str
+    doc_id_b: str = Field(
+        default="", description="Mismo que doc_id_a si es intra-documento"
+    )
+    extract_a: str
+    extract_b: str = Field(default="")
+    description: str
+    suggestion: str
+
+
+class DetectInconsistenciesSuccess(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    status: Literal["success"]
+    findings: List[_InconsistencyFinding]
+    total: int
+    llm_used: bool
+
+
+class DetectInconsistenciesError(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    status: Literal["error"]
+    error: str
+    findings: List = Field(default_factory=list)
+
+
 # ── Tool 7: detect_redundancy ────────────────────────────────────────
 
 
@@ -260,6 +307,41 @@ class _RedundantPair(BaseModel):
     doc_id_b: str
     content_a_preview: str
     content_b_preview: str
+
+
+class WebSearchResult(BaseModel):
+    """Resultado individual de búsqueda web."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    title: str
+    url: str
+    snippet: str
+    content: str
+    source_type: Literal["web"]
+    hash: str
+
+
+class SearchWebSuccess(BaseModel):
+    """Respuesta exitosa de búsqueda web."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    status: Literal["success"]
+    query: str
+    results: List[WebSearchResult]
+    total: int
+    provider: Literal["tavily", "duckduckgo"]
+
+
+class SearchWebError(BaseModel):
+    """Respuesta de error de búsqueda web."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    status: Literal["error"]
+    error: str
+    results: List = Field(default_factory=list)
 
 
 class DetectRedundancySuccess(BaseModel):
@@ -326,9 +408,21 @@ TOOL_OUTPUT_SCHEMAS: Dict[str, TypeAdapter] = {
             Field(discriminator="status"),
         ]
     ),
+    "search_web": TypeAdapter(
+        Annotated[
+            Union[SearchWebSuccess, SearchWebError],
+            Field(discriminator="status"),
+        ]
+    ),
     "detect_redundancy": TypeAdapter(
         Annotated[
             Union[DetectRedundancySuccess, DetectRedundancyError],
+            Field(discriminator="status"),
+        ]
+    ),
+    "detect_inconsistencies": TypeAdapter(
+        Annotated[
+            Union[DetectInconsistenciesSuccess, DetectInconsistenciesError],
             Field(discriminator="status"),
         ]
     ),
@@ -475,6 +569,42 @@ def validate_redundancy_finding(finding: dict) -> dict:
             missing.append(f"{field}: {error.get('msg', '')}")
         raise SuggestionDataValidationError(
             f"Hallazgo de redundancia rechazado: campos faltantes o inválidos: "
+            f"{'; '.join(missing)}"
+        ) from e
+
+    return finding
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Validación de hallazgos de inconsistencia
+# ═══════════════════════════════════════════════════════════════════════
+
+
+# Re-exportamos alias público del modelo interno para uso externo
+InconsistencyFinding = _InconsistencyFinding
+
+
+def validate_inconsistency_finding(finding: dict) -> dict:
+    """Valida que un hallazgo de inconsistencia tenga la estructura correcta.
+
+    Args:
+        finding: Diccionario con datos del hallazgo de inconsistencia.
+
+    Returns:
+        El mismo diccionario si pasa la validación.
+
+    Raises:
+        SuggestionDataValidationError: Si falta algún campo requerido.
+    """
+    try:
+        _InconsistencyFinding.model_validate(finding)
+    except PydanticValidationError as e:
+        missing = []
+        for error in e.errors():
+            field = " → ".join(str(p) for p in error.get("loc", []))
+            missing.append(f"{field}: {error.get('msg', '')}")
+        raise SuggestionDataValidationError(
+            f"Hallazgo de inconsistencia rechazado: campos faltantes o inválidos: "
             f"{'; '.join(missing)}"
         ) from e
 

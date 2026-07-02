@@ -284,32 +284,36 @@ export default function ReferenceDocs() {
   const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const LIMIT = 20;
 
-  const fetchDocs = async (isFirstLoad = false, currentPage = page) => {
-    try {
-      const { data } = await getReferenceDocs({
-        page: currentPage,
-        limit: LIMIT,
-      });
-      const sorted = [...data.items].sort(
-        (a, b) =>
-          new Date(b.uploaded_at).getTime() - new Date(a.uploaded_at).getTime(),
-      );
-      setDocs(sorted);
-      setTotal(data.total);
+  const fetchDocs = useCallback(
+    async (isFirstLoad = false, currentPage = page) => {
+      try {
+        const { data } = await getReferenceDocs({
+          page: currentPage,
+          limit: LIMIT,
+        });
+        const sorted = [...data.items].sort(
+          (a, b) =>
+            new Date(b.uploaded_at).getTime() -
+            new Date(a.uploaded_at).getTime(),
+        );
+        setDocs(sorted);
+        setTotal(data.total);
 
-      const hasProcessing = data.items.some(
-        (d) => d.status === "processing" || d.status === "needs_review",
-      );
-      if (!hasProcessing && pollingRef.current) {
-        clearInterval(pollingRef.current);
-        pollingRef.current = null;
+        const hasProcessing = data.items.some(
+          (d) => d.status === "processing" || d.status === "needs_review",
+        );
+        if (!hasProcessing && pollingRef.current) {
+          clearInterval(pollingRef.current);
+          pollingRef.current = null;
+        }
+      } catch {
+        // silent
+      } finally {
+        if (isFirstLoad) setLoading(false);
       }
-    } catch {
-      // silent
-    } finally {
-      if (isFirstLoad) setLoading(false);
-    }
-  };
+    },
+    [page],
+  );
 
   const goToPage = (newPage: number) => {
     setPage(newPage);
@@ -318,12 +322,13 @@ export default function ReferenceDocs() {
   };
 
   useEffect(() => {
-    fetchDocs(true);
+    const timer = setTimeout(() => fetchDocs(true), 0);
     pollingRef.current = setInterval(() => fetchDocs(false), 5000);
     return () => {
+      clearTimeout(timer);
       if (pollingRef.current) clearInterval(pollingRef.current);
     };
-  }, []);
+  }, [fetchDocs]);
 
   const handleDelete = async (id: string) => {
     setDeleting(id);

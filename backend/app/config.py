@@ -50,6 +50,12 @@ class Settings(BaseSettings):
     # LangGraph checkpoint persistence
     AGENT_CHECKPOINT_DB_PATH: str = "data/checkpoints/curation_graph.sqlite"
 
+    # Web search
+    WEB_SEARCH_PROVIDER: str = "duckduckgo"  # "tavily" | "duckduckgo"
+    TAVILY_API_KEY: str = ""
+    WEB_SEARCH_MAX_RESULTS: int = 5
+    WEB_SEARCH_TIMEOUT: int = 10  # segundos
+
     @field_validator("ALLOWED_ORIGINS", mode="before")
     @classmethod
     def parse_origins(cls, v):

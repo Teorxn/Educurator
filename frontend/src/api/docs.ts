@@ -30,6 +30,52 @@ export const getDocs = (params?: {
   limit?: number;
 }) => api.get<DocsResponse>("/api/docs", { params });
 
+export const getDoc = (id: string) => api.get<Document>(`/api/docs/${id}`);
+
+export interface Chunk {
+  chunk_index: number;
+  content: string;
+  token_count: number;
+  page_number: number | null;
+}
+
+export interface DocContent {
+  id: string;
+  filename: string;
+  original_filename: string;
+  file_type: "pdf" | "docx" | "txt";
+  status: "needs_review" | "processing" | "approved" | "rejected" | "archived";
+  category: "curated" | "reference";
+  size_bytes: number;
+  uploaded_at: string;
+  updated_at: string | null;
+  content: string;
+  chunks: Chunk[];
+}
+
+export const getDocContent = (id: string) =>
+  api.get<DocContent>(`/api/docs/${id}/content`);
+
+export interface HistoryRecord {
+  id: string;
+  doc_id: string | null;
+  action: string;
+  performed_by: string | null;
+  before_content: Record<string, unknown> | null;
+  after_content: Record<string, unknown> | null;
+  reason: string | null;
+  timestamp: string;
+}
+
+export const getDocHistory = (
+  id: string,
+  params?: { page?: number; limit?: number },
+) =>
+  api.get<{ items: HistoryRecord[]; total: number }>(
+    `/api/docs/${id}/history`,
+    { params },
+  );
+
 export const uploadDoc = (file: File, onProgress?: (pct: number) => void) => {
   const form = new FormData();
   form.append("file", file);
@@ -56,12 +102,13 @@ export interface Suggestion {
   id: string;
   document_id: string;
   document_name: string | null;
-  type: "redundancy" | "conflict" | "faq" | "update";
+  type: "redundancy" | "conflict" | "faq" | "update" | "inconsistency";
   description: string;
   source_doc_id: string;
   source_chunk_ids: string[];
   source_chunks: ChunkEvidence[];
   source_type: string | null;
+  source_web_url: string | null;
   confidence_score: number;
   reasoning: string | null;
   status: "pending" | "approved" | "rejected";

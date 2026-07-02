@@ -35,9 +35,11 @@ from app.agents.nodes import (
     chunk_and_embed_node,
     faq_generation_node,
     generate_suggestions_node,
+    inconsistency_detection_node,
     load_documents_node,
     redundancy_detection_node,
     wait_human_approval_node,
+    web_search_node,
 )
 from app.agents.state import AgentState
 from app.config import settings
@@ -226,13 +228,17 @@ def _build_graph() -> StateGraph:
     Flujo completo:
       START → load_documents
         → (sin docs) → END
-        → (con docs) → chunk_and_embed → redundancy_detection →
-          react_agent → faq_generation → generate_suggestions →
-          wait_human_approval → END
+        → (con docs) → chunk_and_embed → redundancy_detection ─┐
+                                        → inconsistency_detection ─┤
+                                                                   ↓
+                                          react_agent → faq_generation →
+                                          generate_suggestions → wait_human_approval → END
 
     Si no hay LLM configurado, el grafo salta el nodo react_agent:
-      chunk_and_embed → redundancy_detection → faq_generation →
-      generate_suggestions → wait_human_approval → END
+      chunk_and_embed → redundancy_detection ─┐
+                      → inconsistency_detection ─┤
+                                                  ↓
+                        faq_generation → generate_suggestions → wait_human_approval → END
     """
     builder = StateGraph(AgentState)
 
@@ -240,6 +246,8 @@ def _build_graph() -> StateGraph:
     builder.add_node("load_documents", load_documents_node)
     builder.add_node("chunk_and_embed", chunk_and_embed_node)
     builder.add_node("redundancy_detection", redundancy_detection_node)
+    builder.add_node("inconsistency_detection", inconsistency_detection_node)
+    builder.add_node("web_search", web_search_node)
     builder.add_node("faq_generation", faq_generation_node)
     builder.add_node("generate_suggestions", generate_suggestions_node)
     builder.add_node("wait_human_approval", wait_human_approval_node)
@@ -259,13 +267,15 @@ def _build_graph() -> StateGraph:
         {"continue": "chunk_and_embed", "end": END},
     )
 
-    # chunk_and_embed → redundancy_detection
+    # chunk_and_embed → redundancy_detection e inconsistency_detection (paralelo)
     builder.add_edge("chunk_and_embed", "redundancy_detection")
+    builder.add_edge("chunk_and_embed", "inconsistency_detection")
 
-    # redundancy_detection → react_agent (si existe) → faq_generation
-    #                      → faq_generation (directo si no hay agente)
-    next_after_red = "react_agent" if _react_agent else "faq_generation"
-    builder.add_edge("redundancy_detection", next_after_red)
+    # Ambos confluyen en web_search (nodo opcional)
+    next_after_detection = "react_agent" if _react_agent else "faq_generation"
+    builder.add_edge("redundancy_detection", "web_search")
+    builder.add_edge("inconsistency_detection", "web_search")
+    builder.add_edge("web_search", next_after_detection)
 
     if _react_agent is not None:
         builder.add_edge("react_agent", "faq_generation")
@@ -402,6 +412,9 @@ async def run_curation(
         ],
         "suggestions": [],
         "redundancy_findings": [],
+        "inconsistency_findings": [],
+        "terminology_map": {},
+        "web_search_results": [],
         "error": None,
     }
 

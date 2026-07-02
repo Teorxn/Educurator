@@ -41,9 +41,10 @@ Educurator/
 │   └── alembic/                # Migraciones PostgreSQL
 ├── data/
 │   ├── uploads/                # Archivos subidos por docentes
+│   ├── references/             # Documentos de referencia (reglamentos, normas)
 │   ├── processed/
 │   └── archived/
-├── docker-compose.yml          # Stack completo: api + db + chromadb + langfuse
+├── docker-compose.yml          # Perfiles: "default" (infra) y "full" (infra + api)
 └── Dockerfile                  # Build de la API
 ```
 
@@ -68,39 +69,37 @@ cd Educurator
 cp .env.example .env
 ```
 
-Editar `.env` (raíz del proyecto) y completar:
+Editar `.env` (raíz del proyecto) y completar según el LLM que uses.
 
-```env
-DATABASE_URL=postgresql+asyncpg://postgres:postgres@db:5432/educurator
-SECRET_KEY=cambia-esto-por-un-secreto-largo
-ALLOWED_ORIGINS=["http://localhost:5173"]
+### 2. Elegir modo de ejecución
 
-# Langfuse (requerido por docker-compose)
-LANGFUSE_SECRET=cambia-esto-por-un-secreto-unico
-LANGFUSE_SALT=cambia-esto-por-un-salt-unico
+El proyecto usa un solo `docker-compose.yml` con **perfiles**.
 
-# LLM — elige SOLO una:
-# OPENAI_API_KEY=sk-...
-# GEMINI_API_KEY=tu-api-key-de-gemini
-# HUGGINGFACE_MODEL=TinyLlama/TinyLlama-1.1B-Chat-v1.0
-```
+#### Solo infraestructura (db, chromadb, langfuse)
 
-> **Nota:** Para desarrollo local sin Docker, el `.env` va en `backend/` (ver Opción B).
-
-### 2. Levantar el stack
+Backend y frontend se ejecutan en local desde la terminal:
 
 ```bash
-# Desde la raíz del proyecto
-docker-compose up -d
+docker compose up -d
 ```
 
-Servicios que levanta:
+| Servicio | URL local |
+|---|---|
+| PostgreSQL | localhost:5434 |
+| ChromaDB | http://localhost:8001 |
+| Langfuse | http://localhost:3000 |
+
+#### Stack completo (infra + api)
+
+```bash
+docker compose --profile full up -d
+```
 
 | Servicio | URL local |
 |---|---|
 | FastAPI API | http://localhost:8000 |
 | Swagger UI | http://localhost:8000/docs |
-| PostgreSQL | localhost:5432 |
+| PostgreSQL | localhost:5434 |
 | ChromaDB | http://localhost:8001 |
 | Langfuse | http://localhost:3000 |
 
@@ -113,14 +112,16 @@ docker compose ps
 
 ### 4. Correr las migraciones
 
+Con el stack completo:
+
 ```bash
-docker-compose exec api alembic upgrade head
+docker compose --profile full exec api alembic upgrade head
 ```
 
 ### 5. Crear usuarios iniciales (seed)
 
 ```bash
-docker-compose exec api python seed.py
+docker compose --profile full exec api python seed.py
 ```
 
 Usuarios creados:
@@ -147,9 +148,8 @@ python -m venv .venv
 # Instalar dependencias
 pip install -r requirements.txt
 
-# Configurar .env
-cp .env.example .env
-# Editar .env con DATABASE_URL apuntando a Postgres local
+# Asegúrate de tener el .env en la raíz del proyecto (cp ../.env.example ../.env)
+# y que DATABASE_URL apunte a localhost:5434 (ya viene así por defecto)
 
 # Correr migraciones
 alembic upgrade head
@@ -180,16 +180,13 @@ El frontend corre en http://localhost:5173 y apunta al backend en `http://localh
 Útil para desarrollar el backend localmente con Postgres y ChromaDB en Docker:
 
 ```bash
-cd backend
-docker compose up -d db chromadb
+docker compose up -d
 ```
 
 Postgres queda en `localhost:5434` (puerto alternativo para no colisionar con instalaciones locales).  
-Ajustar tu `.env`:
+El `.env` ya viene con la URL correcta para este modo.
 
-```env
-DATABASE_URL=postgresql+asyncpg://postgres:postgres@localhost:5434/educurator
-```
+Luego corre el backend y frontend en local (ver Opción B).
 
 ---
 
@@ -202,12 +199,28 @@ POST /auth/login          → { access_token, token_type }
 
 ### Documentos
 ```
-GET  /api/docs            → lista con paginación y filtro por status
-GET  /api/docs/{id}       → detalle de un documento
-POST /api/docs/upload     → subir PDF, DOCX o TXT (max 50 MB)
-PATCH /api/docs/{id}      → cambiar status manualmente
-GET  /api/docs/{id}/history → historial de cambios (audit trail)
+GET  /api/docs                  → lista con paginación y filtro por status/category
+GET  /api/docs/{id}             → detalle de un documento
+POST /api/docs/upload           → subir PDF, DOCX o TXT (max 50 MB)
+PATCH /api/docs/{id}            → cambiar status manualmente
+GET  /api/docs/{id}/history     → historial de cambios (audit trail)
 ```
+
+> El parámetro `category` en `GET /api/docs` permite filtrar por tipo:
+> `curated` (default), `reference`, o `all`.
+
+### Documentos de Referencia
+```
+POST /api/reference-docs/upload   → subir documento como referencia
+GET  /api/reference-docs          → listar referencias con paginación
+GET  /api/reference-docs/{id}     → detalle de una referencia
+DELETE /api/reference-docs/{id}   → eliminar referencia y sus chunks
+POST /api/reference-docs/process  → reprocesar referencias pendientes
+```
+
+Los documentos de referencia (reglamentos, normas, FAQs, libros de texto)
+se procesan sin generar sugerencias. El agente los consulta como fuente
+confiable para contrastar con los documentos curados.
 
 ### Sugerencias
 ```
@@ -216,6 +229,9 @@ POST /api/suggestions/{id}/approve → aprobar (escribe history + feedback_patte
 POST /api/suggestions/{id}/reject  → rechazar con motivo obligatorio
 POST /api/suggestions/{id}/feedback → retroalimentación adicional
 ```
+
+> Las sugerencias que usan documentos de referencia como fuente muestran
+> el badge `📚 Fuente: Referencia` y el campo `source_type: "reference"`.
 
 ### Analytics
 ```
@@ -243,7 +259,7 @@ Documentación interactiva completa: **http://localhost:8000/docs**
 | Tabla | Descripción |
 |---|---|
 | `users` | Docentes y admins con rol y estado activo |
-| `documents` | Documentos subidos con status y path |
+| `documents` | Documentos subidos con status, category (curated/reference) y path |
 | `document_chunks` | Chunks del pipeline RAG (512 tokens, overlap 50) |
 | `suggestions` | Sugerencias del agente: redundancy, conflict, faq, update |
 | `document_history` | Audit trail inmutable (INSERT only) |
@@ -304,6 +320,7 @@ ALLOWED_ORIGINS=["http://localhost:5173","http://localhost:3000"]
 
 # Uploads
 UPLOAD_DIR=data/uploads
+REFERENCE_DOCS_DIR=data/references
 MAX_FILE_SIZE=52428800        # 50 MB
 
 # LLM — elige SOLO una:
@@ -322,16 +339,16 @@ MAX_FILE_SIZE=52428800        # 50 MB
 
 ```bash
 # Ver logs de la API
-docker-compose logs -f api
+docker compose --profile full logs -f api
 
 # Acceder a PostgreSQL
-docker-compose exec db psql -U postgres -d educurator
+docker compose exec db psql -U postgres -d educurator
 
 # Revertir todas las migraciones
 alembic downgrade base
 
 # Apagar y borrar volúmenes
-docker-compose down -v
+docker compose down -v
 ```
 
 ---
