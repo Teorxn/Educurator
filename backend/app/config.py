@@ -1,5 +1,11 @@
+from pathlib import Path
+
 from pydantic import field_validator
 from pydantic_settings import BaseSettings
+
+# Ruta absoluta al .env en la raíz del proyecto
+_PROJECT_ROOT = Path(__file__).resolve().parents[2]
+_ENV_PATH = _PROJECT_ROOT / ".env"
 
 
 class Settings(BaseSettings):
@@ -63,7 +69,7 @@ class Settings(BaseSettings):
             return [o.strip() for o in v.split(",")]
         return v
 
-    model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
+    model_config = {"env_file": str(_ENV_PATH), "env_file_encoding": "utf-8"}
 
 
 settings = Settings()

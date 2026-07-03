@@ -1,8 +1,16 @@
 import { useEffect, useState, useRef } from "react";
-import { FileText, RefreshCw, Upload } from "lucide-react";
+import {
+  FileText,
+  FlaskConical,
+  RefreshCw,
+  Sparkles,
+  Trash2,
+  Upload,
+} from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import DocBadge from "../components/DocBadge";
-import { getDocs } from "../api/docs";
+import { getDocs, deleteDoc } from "../api/docs";
+import { triggerCuration } from "../api/analysis";
 import type { Document } from "../api/docs";
 
 const FILE_EMOJI: Record<string, string> = { pdf: "📄", docx: "📝", txt: "📃" };
@@ -24,7 +32,42 @@ export default function DocList() {
   const navigate = useNavigate();
   const [docs, setDocs] = useState<Document[]>([]);
   const [loading, setLoading] = useState(true);
+  const [analyzing, setAnalyzing] = useState(false);
+  const [analysisMsg, setAnalysisMsg] = useState<string | null>(null);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
   const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  const handleDelete = async (id: string) => {
+    setDeletingId(id);
+    setConfirmDelete(null);
+    try {
+      await deleteDoc(id);
+      setDocs((prev) => prev.filter((d) => d.id !== id));
+    } catch {
+      // silent
+    } finally {
+      setDeletingId(null);
+    }
+  };
+
+  const handleAnalyze = async () => {
+    setAnalyzing(true);
+    setAnalysisMsg(null);
+    try {
+      const { data } = await triggerCuration();
+      setAnalysisMsg(
+        data.status === "accepted"
+          ? "Análisis iniciado. Procesando documentos..."
+          : "Error al iniciar el análisis",
+      );
+    } catch {
+      setAnalysisMsg("Error al conectar con el servidor");
+    } finally {
+      setAnalyzing(false);
+      setTimeout(() => setAnalysisMsg(null), 5000);
+    }
+  };
 
   useEffect(() => {
     let cancelled = false;
@@ -118,17 +161,40 @@ export default function DocList() {
   return (
     <div className="space-y-4">
       {/* Toolbar */}
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between flex-wrap gap-2">
         <p className="text-sm text-gray-500">
           {docs.length} documento{docs.length !== 1 ? "s" : ""}
         </p>
-        {isPolling && (
-          <span className="flex items-center gap-1.5 text-xs text-yellow-800 bg-yellow-50 border border-yellow-200 rounded-full px-3 py-1">
-            <RefreshCw className="w-3 h-3 animate-spin" />
-            Agente procesando...
-          </span>
-        )}
+        <div className="flex items-center gap-2">
+          {isPolling && (
+            <span className="flex items-center gap-1.5 text-xs text-yellow-800 bg-yellow-50 border border-yellow-200 rounded-full px-3 py-1">
+              <RefreshCw className="w-3 h-3 animate-spin" />
+              Agente procesando...
+            </span>
+          )}
+          <button
+            onClick={handleAnalyze}
+            disabled={analyzing || isPolling}
+            className="flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed
+              bg-violet-50 text-violet-700 hover:bg-violet-100 border border-violet-200"
+          >
+            {analyzing ? (
+              <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+            ) : (
+              <Sparkles className="w-3.5 h-3.5" />
+            )}
+            {analyzing ? "Analizando..." : "Analizar todo"}
+          </button>
+        </div>
       </div>
+
+      {/* Feedback message */}
+      {analysisMsg && (
+        <div className="flex items-center gap-2 text-sm rounded-xl px-4 py-3 bg-blue-50 border border-blue-200 text-blue-800">
+          <FlaskConical className="w-4 h-4 shrink-0" />
+          {analysisMsg}
+        </div>
+      )}
 
       {/* Table */}
       <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
@@ -149,6 +215,9 @@ export default function DocList() {
               </th>
               <th className="px-4 py-3 text-left font-medium text-gray-600">
                 Subido
+              </th>
+              <th className="px-4 py-3 text-right font-medium text-gray-600">
+                Acciones
               </th>
             </tr>
           </thead>
@@ -187,6 +256,42 @@ export default function DocList() {
                 </td>
                 <td className="px-4 py-3 text-gray-500 text-xs">
                   {fmtDate(doc.uploaded_at)}
+                </td>
+                <td className="px-4 py-3 text-right">
+                  {confirmDelete === doc.id ? (
+                    <div className="flex items-center justify-end gap-1.5">
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleDelete(doc.id);
+                        }}
+                        disabled={deletingId === doc.id}
+                        className="text-xs font-medium px-2 py-1 rounded-md bg-red-600 text-white hover:bg-red-700 transition-colors disabled:opacity-50"
+                      >
+                        {deletingId === doc.id ? "..." : "Eliminar"}
+                      </button>
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setConfirmDelete(null);
+                        }}
+                        className="text-xs font-medium px-2 py-1 rounded-md bg-gray-100 text-gray-600 hover:bg-gray-200 transition-colors"
+                      >
+                        Cancelar
+                      </button>
+                    </div>
+                  ) : (
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setConfirmDelete(doc.id);
+                      }}
+                      className="p-1.5 rounded-md text-gray-400 hover:text-red-600 hover:bg-red-50 transition-colors"
+                      title="Eliminar documento"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  )}
                 </td>
               </tr>
             ))}

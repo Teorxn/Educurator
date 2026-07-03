@@ -76,6 +76,9 @@ export const getDocHistory = (
     { params },
   );
 
+export const deleteDoc = (id: string) =>
+  api.delete<{ status: string; message: string }>(`/api/docs/${id}`);
+
 export const uploadDoc = (file: File, onProgress?: (pct: number) => void) => {
   const form = new FormData();
   form.append("file", file);

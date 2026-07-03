@@ -175,6 +175,9 @@ class TestFullCurationPipeline:
             "messages": [],
             "suggestions": [],
             "redundancy_findings": [],
+            "inconsistency_findings": [],
+            "terminology_map": {},
+            "web_search_results": [],
             "error": None,
         }
         result = await load_documents_node(state)
@@ -209,6 +212,9 @@ class TestFullCurationPipeline:
             "messages": [],
             "suggestions": [],
             "redundancy_findings": [],
+            "inconsistency_findings": [],
+            "terminology_map": {},
+            "web_search_results": [],
             "error": None,
         }
         result = await load_documents_node(state)
@@ -282,6 +288,9 @@ class TestFullCurationPipeline:
                 "messages": [],
                 "suggestions": [],
                 "redundancy_findings": [],
+                "inconsistency_findings": [],
+                "terminology_map": {},
+                "web_search_results": [],
                 "error": None,
             }
             result = await chunk_and_embed_node(state)
@@ -377,6 +386,9 @@ class TestFullCurationPipeline:
             "messages": [],
             "suggestions": [],
             "redundancy_findings": [],
+            "inconsistency_findings": [],
+            "terminology_map": {},
+            "web_search_results": [],
             "error": None,
         }
         result = await redundancy_detection_node(state)
@@ -461,6 +473,9 @@ class TestFullCurationPipeline:
             "messages": [],
             "suggestions": [],
             "redundancy_findings": redundancy_findings,
+            "inconsistency_findings": [],
+            "terminology_map": {},
+            "web_search_results": [],
             "error": None,
         }
         result = await generate_suggestions_node(state)
@@ -520,6 +535,9 @@ class TestFullCurationPipeline:
             "messages": [],
             "suggestions": [],
             "redundancy_findings": [],
+            "inconsistency_findings": [],
+            "terminology_map": {},
+            "web_search_results": [],
             "error": None,
         }
         result = await generate_suggestions_node(state)
@@ -569,6 +587,9 @@ class TestFullCurationPipeline:
             "messages": [],
             "suggestions": suggestions,
             "redundancy_findings": [],
+            "inconsistency_findings": [],
+            "terminology_map": {},
+            "web_search_results": [],
             "error": None,
         }
         await wait_human_approval_node(state)

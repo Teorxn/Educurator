@@ -19,8 +19,8 @@ pdf2image==1.17.0
 chromadb==1.5.9
 tiktoken==0.8.0
 sentence-transformers==3.4.1
-langgraph~=1.2.0
-langgraph-checkpoint-sqlite~=2.0.0
+langgraph~=1.2.7
+langgraph-checkpoint-sqlite~=3.1.0
 aiosqlite==0.20.0
 langchain-openai~=1.2.0
 langchain-huggingface~=1.2.0

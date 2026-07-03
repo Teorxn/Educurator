@@ -5,10 +5,11 @@ Define el schema de estado que fluye a través de los nodos del grafo.
 Cada clave es un canal que los nodos pueden leer y escribir.
 """
 
-from typing import Annotated, List, Optional, TypedDict
+from typing import Annotated, List, NotRequired, Optional, TypedDict
 
 from langchain_core.messages import BaseMessage
 from langgraph.graph import add_messages
+from langgraph.managed import RemainingSteps
 
 
 class AgentState(TypedDict):
@@ -70,3 +71,4 @@ class AgentState(TypedDict):
     terminology_map: dict
     web_search_results: List[dict]
     error: Optional[str]
+    remaining_steps: NotRequired[RemainingSteps]

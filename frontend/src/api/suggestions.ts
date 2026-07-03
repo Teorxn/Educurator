@@ -30,17 +30,20 @@ export interface ChunkEvidence {
 
 export interface Suggestion {
   id: string;
-  doc_id: string;
+  document_id: string;
+  document_name: string | null;
   type: SuggestionType;
   status: SuggestionStatus;
   description: string;
   reasoning: string | null;
-  confidence_score: number | null;
-  source_chunk_ids: string[] | null;
+  confidence_score: number;
+  source_chunk_ids: string[];
   source_chunks: ChunkEvidence[];
-  source_doc_id: string | null;
+  source_doc_id: string;
   source_web_url: string | null;
-  rejection_reason: string | null;
+  source_type: string | null;
+  review_reason: string | null;
+  reviewed_by: string | null;
   created_at: string;
   reviewed_at: string | null;
 }

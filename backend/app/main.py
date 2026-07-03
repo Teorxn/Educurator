@@ -1,3 +1,4 @@
+import asyncio
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -9,7 +10,11 @@ from app.config import settings
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    yield
+    try:
+        yield
+    except asyncio.CancelledError:
+        # Shutdown normal del servidor — no propaga el error
+        pass
 
 
 app = FastAPI(

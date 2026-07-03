@@ -108,13 +108,23 @@ def _create_llm():
     gemini_key = (settings.GEMINI_API_KEY or "").strip()
     if gemini_key:
         try:
+            from langchain_core.rate_limiters import InMemoryRateLimiter
             from langchain_google_genai import ChatGoogleGenerativeAI
 
-            logger.info("Usando Google Gemini: gemini-2.5-flash")
+            # Free tier Gemini: 5 requests/minuto → limitamos a 4 RPM
+            # (0.0667 req/s = 1 request cada ~15s)
+            rate_limiter = InMemoryRateLimiter(
+                requests_per_second=0.06,
+                check_every_n_seconds=0.1,
+                max_bucket_size=1,  # Sin ráfagas
+            )
+
+            logger.info("Usando Google Gemini: gemini-2.5-flash (rate limited: 4 RPM)")
             return ChatGoogleGenerativeAI(
                 model="gemini-2.5-flash",
                 temperature=0,
                 api_key=gemini_key,
+                rate_limiter=rate_limiter,
             )
         except Exception as e:
             logger.warning("Error configurando Gemini: %s", e)
@@ -201,7 +211,8 @@ if _LLM is not None:
         model=_LLM,
         tools=_TOOLS,
         state_schema=AgentState,
-        state_modifier=_SYSTEM_PROMPT,
+        prompt=_SYSTEM_PROMPT,
+        version="v1",
     )
     logger.info("✅ ReAct agent creado con LLM: %s", _LLM.__class__.__name__)
 else:
@@ -301,16 +312,14 @@ def _get_langfuse_handler() -> Optional[Any]:
     return _langfuse_handler
 
 
-# ── Checkpointer: AsyncSqliteSaver ───────────────────────────────────────────
+# ── Checkpointer ────────────────────────────────────────────────────────────
 
-_checkpointer_name = "AsyncSqliteSaver"
+_checkpointer_name = "MemorySaver"
 _runtime_graph = None
 _runtime_checkpointer = None
-_runtime_checkpoint_conn = None
 _runtime_graph_lock: asyncio.Lock | None = None
 
-# Grafo de inspección/importación. La ejecución real usa _get_runtime_graph(),
-# porque AsyncSqliteSaver debe construirse dentro de un event loop activo.
+# Grafo de inspección/importación.
 curation_graph = _build_graph().compile(checkpointer=MemorySaver())
 logger.info("✅ Grafo de curación compilado para inspección con MemorySaver")
 
@@ -318,11 +327,11 @@ logger.info("✅ Grafo de curación compilado para inspección con MemorySaver")
 async def _get_runtime_graph():
     """Retorna el grafo ejecutable con checkpoint persistente en SQLite.
 
-    LangGraph requiere AsyncSqliteSaver para usar ainvoke/astream. Como ese saver
-    necesita un event loop activo, se inicializa de forma lazy en la primera corrida.
+    Usa AsyncSqliteSaver para persistir checkpoints entre corridas.
+    Si langgraph-checkpoint-sqlite no está instalado, cae a MemorySaver.
     """
-    global _runtime_graph, _runtime_checkpointer, _runtime_checkpoint_conn
-    global _runtime_graph_lock, _checkpointer_name
+    global _runtime_graph, _runtime_checkpointer, _runtime_graph_lock
+    global _checkpointer_name
 
     if _runtime_graph is not None:
         return _runtime_graph
@@ -341,15 +350,14 @@ async def _get_runtime_graph():
             checkpoint_path = Path(settings.AGENT_CHECKPOINT_DB_PATH)
             checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
             conn = await aiosqlite.connect(str(checkpoint_path))
-            _runtime_checkpoint_conn = conn
             _runtime_checkpointer = AsyncSqliteSaver(conn)
             _runtime_graph = _build_graph().compile(checkpointer=_runtime_checkpointer)
             _checkpointer_name = "AsyncSqliteSaver"
             logger.info("✅ AsyncSqliteSaver configurado en %s", checkpoint_path)
-        except ImportError as exc:
+        except Exception as exc:
             logger.warning(
-                "langgraph-checkpoint-sqlite/aiosqlite no está instalado; "
-                "usando MemorySaver: %s",
+                "No se pudo configurar AsyncSqliteSaver (%s); "
+                "usando MemorySaver como fallback",
                 exc,
             )
             _runtime_checkpointer = MemorySaver()

@@ -67,3 +67,8 @@ class DocContentResponse(BaseModel):
 class PatchDocumentRequest(BaseModel):
     status: DocumentStatus | None = None
     reason: str | None = None
+
+
+class DocDeleteResponse(BaseModel):
+    status: str
+    message: str

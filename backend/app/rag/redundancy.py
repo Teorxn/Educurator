@@ -132,8 +132,10 @@ def _compute_confidence_score(
 def _safe_get_embeddings(data, idx: int) -> Optional[list[float]]:
     """Extrae el embedding en `idx` de `data`, retornando None si no existe."""
     try:
-        emb = data["embeddings"][idx] if data.get("embeddings") else None
-        return emb
+        emb = data.get("embeddings")
+        if emb is not None:
+            return emb[idx]
+        return None
     except (IndexError, TypeError):
         return None
 
@@ -141,15 +143,17 @@ def _safe_get_embeddings(data, idx: int) -> Optional[list[float]]:
 def _safe_get_content(data, idx: int) -> str:
     """Extrae el contenido en `idx` de `data`, retornando '' si no existe."""
     try:
-        return data["documents"][idx] if data.get("documents") else ""
+        docs = data.get("documents")
+        return docs[idx] if docs is not None else ""
     except (IndexError, TypeError):
         return ""
 
 
 def _safe_get_metadata(data, idx: int) -> dict:
-    """Extrae metadatos en `idx` de `data`, retornando {} si no existe."""
+    """Extrae los metadatos en `idx` de `data`, retornando {} si no existe."""
     try:
-        return data["metadatas"][idx] if data.get("metadatas") else {}
+        metas = data.get("metadatas")
+        return metas[idx] if metas is not None else {}
     except (IndexError, TypeError):
         return {}
 

@@ -492,8 +492,14 @@ async def faq_generation_node(state: "AgentState") -> dict:
     new_suggestions: list[dict] = []
     errors: list[str] = []
 
+    # Límite de chunks que usarán LLM para generar FAQ (por cuota gratuita Gemini: 5 RPM)
+    # Los chunks más allá de este límite usarán la heurística de extracción de oraciones
+    _MAX_LLM_FAQS = 3
+    llm_faq_count = 0
+    has_llm = _get_llm_for_node() is not None
+
     async with AsyncSessionLocal() as db:
-        for chunk in chunks:
+        for idx, chunk in enumerate(chunks):
             chunk_id = chunk.get("chroma_id", "")
             chunk_content = chunk.get("text", "")
 
@@ -510,27 +516,64 @@ async def faq_generation_node(state: "AgentState") -> dict:
                 continue
 
             try:
-                # Invocar generate_faq_entry directamente
-                result_json = await _generate_faq_entry.ainvoke(
-                    {
-                        "chunk_id": chunk_id,
-                        "chunk_content": chunk_content,
-                        "topic": "general",
-                    }
-                )
-                payload = json.loads(result_json)
+                question = ""
+                answer = ""
+                # Usar LLM solo para los primeros N chunks; el resto usa heurística
+                use_llm = has_llm and llm_faq_count < _MAX_LLM_FAQS
+                if use_llm:
+                    llm_faq_count += 1
 
-                if payload.get("status") != "success":
-                    logger.warning(
-                        "  ⚠️  generate_faq_entry falló para chunk %s: %s",
-                        chunk_id,
-                        payload.get("error", "unknown error"),
+                if use_llm:
+                    result_json = await _generate_faq_entry.ainvoke(
+                        {
+                            "chunk_id": chunk_id,
+                            "chunk_content": chunk_content,
+                            "topic": "general",
+                        }
                     )
-                    continue
+                    payload = json.loads(result_json)
 
-                faq = payload.get("faq", {})
-                question = faq.get("question", "")
-                answer = faq.get("answer", "")
+                    if payload.get("status") != "success":
+                        logger.warning(
+                            "  ⚠️  generate_faq_entry falló para chunk %s: %s",
+                            chunk_id,
+                            payload.get("error", "unknown error"),
+                        )
+                        # Fallback a heurística
+                        use_llm = False
+                    else:
+                        faq = payload.get("faq", {})
+                        question = faq.get("question", "")
+                        answer = faq.get("answer", "")
+
+                if not use_llm:
+                    # Heurística directa (sin LLM) para no exceder cuota
+                    import re
+
+                    sentences = re.split(r"(?<=[.!?])\s+", chunk_content.strip())
+                    sentences = [s.strip() for s in sentences if len(s.strip()) > 20]
+                    if not sentences:
+                        logger.warning(
+                            "  ⚠️  Chunk %s sin contenido suficiente, saltando",
+                            chunk_id,
+                        )
+                        continue
+                    best_sentence = max(sentences, key=len)
+                    other_content = [s for s in sentences if s != best_sentence]
+
+                    words = best_sentence.split()
+                    key_phrases = []
+                    for i, w in enumerate(words):
+                        if w[0].isupper() and len(w) > 2 and i < len(words) - 1:
+                            key_phrases.append(f"{w} {words[i + 1]}")
+                    if key_phrases:
+                        question = f"¿Qué es {' '.join(key_phrases[:3])}?"
+                    else:
+                        question = "¿Qué información se presenta sobre este tema?"
+
+                    answer = "\n".join([best_sentence] + other_content[:3])
+                    if len(answer) > 1000:
+                        answer = answer[:1000] + "..."
 
                 if not question or not answer:
                     logger.warning(

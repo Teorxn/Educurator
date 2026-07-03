@@ -9,9 +9,10 @@ import {
   Hash,
   Layers,
   BookOpen,
+  Trash2,
 } from "lucide-react";
 import DocBadge from "../components/DocBadge";
-import { getDoc, getDocContent, getDocHistory } from "../api/docs";
+import { getDoc, getDocContent, getDocHistory, deleteDoc } from "../api/docs";
 import type { Document, DocContent, HistoryRecord } from "../api/docs";
 
 const FILE_EMOJI: Record<string, string> = { pdf: "📄", docx: "📝", txt: "📃" };
@@ -47,6 +48,8 @@ export default function DocDetail() {
   const [history, setHistory] = useState<HistoryRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
   const [activeTab, setActiveTab] = useState<"content" | "chunks" | "history">(
     "content",
   );
@@ -69,9 +72,7 @@ export default function DocDetail() {
       } catch (err: unknown) {
         if (cancelled) return;
         const msg =
-          err instanceof Error
-            ? err.message
-            : "Error al cargar el documento";
+          err instanceof Error ? err.message : "Error al cargar el documento";
         if (msg.includes("404")) {
           setError("Documento no encontrado");
         } else {
@@ -87,6 +88,18 @@ export default function DocDetail() {
       cancelled = true;
     };
   }, [id]);
+
+  const handleDelete = async () => {
+    if (!id) return;
+    setDeleting(true);
+    try {
+      await deleteDoc(id);
+      navigate("/docs");
+    } catch {
+      setDeleting(false);
+      setConfirmDelete(false);
+    }
+  };
 
   if (loading) {
     return (
@@ -118,10 +131,8 @@ export default function DocDetail() {
   }
 
   const chunkCount = content?.chunks.length ?? 0;
-  const totalTokens = content?.chunks.reduce(
-    (acc, c) => acc + c.token_count,
-    0,
-  ) ?? 0;
+  const totalTokens =
+    content?.chunks.reduce((acc, c) => acc + c.token_count, 0) ?? 0;
 
   return (
     <div className="space-y-6 max-w-4xl">
@@ -137,9 +148,7 @@ export default function DocDetail() {
       {/* Header card */}
       <div className="bg-white border border-gray-200 rounded-xl p-5">
         <div className="flex items-start gap-3">
-          <span className="text-2xl">
-            {FILE_EMOJI[doc.file_type] ?? "📄"}
-          </span>
+          <span className="text-2xl">{FILE_EMOJI[doc.file_type] ?? "📄"}</span>
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-2 flex-wrap">
               <h2 className="text-lg font-semibold text-gray-900 truncate">
@@ -159,6 +168,34 @@ export default function DocDetail() {
               )}
           </div>
           <DocBadge status={doc.status} />
+          <div className="shrink-0">
+            {confirmDelete ? (
+              <div className="flex items-center gap-1.5">
+                <button
+                  onClick={handleDelete}
+                  disabled={deleting}
+                  className="text-xs font-medium px-2.5 py-1.5 rounded-md bg-red-600 text-white hover:bg-red-700 transition-colors disabled:opacity-50"
+                >
+                  {deleting ? "Eliminando..." : "Confirmar"}
+                </button>
+                <button
+                  onClick={() => setConfirmDelete(false)}
+                  disabled={deleting}
+                  className="text-xs font-medium px-2.5 py-1.5 rounded-md bg-gray-100 text-gray-600 hover:bg-gray-200 transition-colors"
+                >
+                  Cancelar
+                </button>
+              </div>
+            ) : (
+              <button
+                onClick={() => setConfirmDelete(true)}
+                className="p-2 rounded-md text-gray-400 hover:text-red-600 hover:bg-red-50 transition-colors"
+                title="Eliminar documento"
+              >
+                <Trash2 className="w-4 h-4" />
+              </button>
+            )}
+          </div>
         </div>
 
         {/* Metadata grid */}

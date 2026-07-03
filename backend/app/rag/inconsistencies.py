@@ -353,8 +353,7 @@ async def detect_terminology_issues(
                                 f"parecen referirse al mismo concepto"
                             ),
                             "suggestion": (
-                                f"Considerar usar un único término para "
-                                f"ambos documentos"
+                                "Considerar usar un único término para ambos documentos"
                             ),
                         }
                         findings.append(finding)
@@ -653,7 +652,7 @@ def _detect_heading_inconsistencies(text: str) -> List[dict]:
         prev_level = level
 
     # Títulos huérfanos: h2/h3 sin h1 en el documento
-    has_h1 = any(l == "1" for l, _ in headings)
+    has_h1 = any(len(level_str) == 1 for level_str, _ in headings)
     if not has_h1 and headings:
         issues.append(
             {
@@ -708,7 +707,7 @@ def _detect_missing_required_sections(text: str) -> List[dict]:
                     f"Secciones obligatorias no encontradas: {', '.join(missing)}"
                 ),
                 "suggestion": (
-                    f"Agregar las secciones faltantes siguiendo la plantilla del curso"
+                    "Agregar las secciones faltantes siguiendo la plantilla del curso"
                 ),
             }
         ]

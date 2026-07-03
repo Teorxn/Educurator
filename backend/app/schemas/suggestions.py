@@ -26,6 +26,7 @@ class SuggestionResponse(BaseModel):
     confidence_score: float
     source_chunk_ids: list
     source_doc_id: str
+    source_web_url: str | None = None
     source_type: str | None = None
     review_reason: str | None
     reviewed_by: uuid.UUID | None
