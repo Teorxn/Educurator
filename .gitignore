@@ -36,6 +36,11 @@ backend/data/archived/*
 !backend/data/archived/.gitkeep
 backend/data/references/*
 !backend/data/references/.gitkeep
+backend/data/checkpoints/*
+!backend/data/checkpoints/.gitkeep
+
+# ── Logs ────────────────────────────────────────────────────────────────────
+backend/backend.log
 
 # ── Coverage / Temp ────────────────────────────────────────────────────
 .coverage
