@@ -314,7 +314,14 @@ class TestDetectStructuralInconsistencies:
 
 @pytest.mark.asyncio
 async def test_self_contradiction_no_llm():
-    """Sin LLM, self_contradiction no debería ejecutarse."""
+    """Sin LLM, self_contradiction no debería ejecutarse.
+
+    Se mockea _get_llm para forzar el escenario sin LLM: sin el mock,
+    el resultado dependería de si hay GEMINI_API_KEY en el entorno
+    (y el test haría llamadas reales a la API, gastando cuota).
+    """
+    from unittest.mock import patch
+
     from app.rag.inconsistencies import detect_self_contradictions
 
     chunks = [
@@ -331,7 +338,8 @@ async def test_self_contradiction_no_llm():
             "content": "El límite es 50 estudiantes",
         },
     ]
-    findings = await detect_self_contradictions(chunks)
+    with patch("app.rag.inconsistencies._get_llm", return_value=None):
+        findings = await detect_self_contradictions(chunks)
     # Sin LLM configurado, no debería encontrar auto-contradicciones
     assert len(findings) == 0
 
@@ -341,7 +349,13 @@ async def test_self_contradiction_no_llm():
 
 @pytest.mark.asyncio
 async def test_terminology_no_llm():
-    """Sin LLM, terminology no debería ejecutarse."""
+    """Sin LLM, terminology no debería ejecutarse.
+
+    Se mockea _get_llm igual que en test_self_contradiction_no_llm
+    para no depender del entorno ni gastar cuota de API.
+    """
+    from unittest.mock import patch
+
     from app.rag.inconsistencies import detect_terminology_issues
 
     chunks = [
@@ -358,7 +372,8 @@ async def test_terminology_no_llm():
             "content": "El cliente debe registrarse",
         },
     ]
-    findings, term_map = await detect_terminology_issues(chunks)
+    with patch("app.rag.inconsistencies._get_llm", return_value=None):
+        findings, term_map = await detect_terminology_issues(chunks)
     assert findings == []
     assert term_map == {}
 

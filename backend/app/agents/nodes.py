@@ -22,7 +22,6 @@ from pathlib import Path
 
 from langchain_core.messages import AIMessage, ToolMessage
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agents.state import AgentState
 from app.config import settings
@@ -202,10 +201,14 @@ async def load_documents_node(state: "AgentState") -> dict:
 
 
 async def _process_single_document(
-    db: AsyncSession,
     doc_id_str: str,
 ) -> tuple[list[dict], dict[str, str], str | None]:
     """Procesa un único documento: parsea, chunkea y embebe.
+
+    Abre su propia AsyncSession — las sesiones de SQLAlchemy NO son seguras
+    para uso concurrente, por lo que cada tarea paralela necesita la suya.
+    El parseo y el embedding (CPU-bound) corren en un thread para no
+    bloquear el event loop.
 
     Returns:
         Tuple (chunks, documents_text_entry, error).
@@ -213,48 +216,52 @@ async def _process_single_document(
     """
     try:
         doc_uuid = uuid.UUID(doc_id_str)
-        result = await db.execute(select(Document).where(Document.id == doc_uuid))
-        doc = result.scalar_one_or_none()
+        async with AsyncSessionLocal() as db:
+            result = await db.execute(select(Document).where(Document.id == doc_uuid))
+            doc = result.scalar_one_or_none()
 
-        if not doc:
-            return [], {}, f"Documento {doc_id_str} no encontrado en DB"
+            if not doc:
+                return [], {}, f"Documento {doc_id_str} no encontrado en DB"
 
-        file_path = Path(doc.file_path)
-        if not file_path.exists():
-            return [], {}, f"Archivo no encontrado: {file_path}"
+            file_path = Path(doc.file_path)
+            if not file_path.exists():
+                return [], {}, f"Archivo no encontrado: {file_path}"
 
-        logger.info("  📄 Procesando: %s (%s)", doc.original_filename, doc.file_type)
-
-        # 1. Parsear
-        text = parse_document(str(file_path))
-        documents_text_entry = {doc_id_str: text}
-        logger.info("     Texto extraído: %d caracteres", len(text))
-
-        # 2. Chunk + embed
-        # Determinar categoría para metadata en ChromaDB
-        doc_category = doc.category.value if hasattr(doc, "category") else "curated"
-
-        chunk_results = embed_chunks(
-            text=text,
-            doc_id=doc_id_str,
-            category=doc_category,
-        )
-        logger.info("     Chunks generados: %d", len(chunk_results))
-
-        # 3. Persistir chunks en Postgres
-        for c in chunk_results:
-            chunk_record = DocumentChunk(
-                document_id=doc_uuid,
-                chunk_index=c["chunk_index"],
-                content=c["text"],
-                token_count=c["token_count"],
-                chroma_id=c["chroma_id"],
-                page_number=c.get("page_number"),
-                hash=c.get("hash"),
+            logger.info(
+                "  📄 Procesando: %s (%s)", doc.original_filename, doc.file_type
             )
-            db.add(chunk_record)
 
-        await db.flush()
+            # 1. Parsear (en thread: I/O + CPU-bound)
+            text = await asyncio.to_thread(parse_document, str(file_path))
+            documents_text_entry = {doc_id_str: text}
+            logger.info("     Texto extraído: %d caracteres", len(text))
+
+            # 2. Chunk + embed (en thread: sentence-transformers es CPU-bound)
+            # Determinar categoría para metadata en ChromaDB
+            doc_category = doc.category.value if hasattr(doc, "category") else "curated"
+
+            chunk_results = await asyncio.to_thread(
+                embed_chunks,
+                text=text,
+                doc_id=doc_id_str,
+                category=doc_category,
+            )
+            logger.info("     Chunks generados: %d", len(chunk_results))
+
+            # 3. Persistir chunks en Postgres
+            for c in chunk_results:
+                chunk_record = DocumentChunk(
+                    document_id=doc_uuid,
+                    chunk_index=c["chunk_index"],
+                    content=c["text"],
+                    token_count=c["token_count"],
+                    chroma_id=c["chroma_id"],
+                    page_number=c.get("page_number"),
+                    hash=c.get("hash"),
+                )
+                db.add(chunk_record)
+
+            await db.commit()
         logger.info("  ✅ Documento %s procesado exitosamente", doc_id_str)
         return chunk_results, documents_text_entry, None
 
@@ -273,8 +280,9 @@ async def chunk_and_embed_node(state: "AgentState") -> dict:
       4. Persiste los chunks en document_chunks (Postgres)
       5. Almacena el texto extraído en state['documents_text']
 
-    Los documentos se procesan en paralelo usando asyncio.gather
-    para mejorar el throughput con múltiples documentos.
+    Los documentos se procesan en paralelo usando asyncio.gather,
+    con concurrencia acotada (EMBED_CONCURRENCY) y una sesión de DB
+    independiente por documento (las AsyncSession no admiten uso concurrente).
     """
     logger.info("=" * 50)
     logger.info("🔧 chunk_and_embed_node — procesando documentos")
@@ -289,18 +297,21 @@ async def chunk_and_embed_node(state: "AgentState") -> dict:
     documents_text: dict[str, str] = {}
     errors: list[str] = []
 
-    async with AsyncSessionLocal() as db:
-        tasks = [_process_single_document(db, doc_id_str) for doc_id_str in doc_ids]
-        results = await asyncio.gather(*tasks)
+    semaphore = asyncio.Semaphore(max(1, getattr(settings, "EMBED_CONCURRENCY", 4)))
 
-        for chunks, text_entry, error in results:
-            if error:
-                errors.append(error)
-            else:
-                all_chunks.extend(chunks)
-                documents_text.update(text_entry)
+    async def _bounded(doc_id_str: str):
+        async with semaphore:
+            return await _process_single_document(doc_id_str)
 
-        await db.commit()
+    tasks = [_bounded(doc_id_str) for doc_id_str in doc_ids]
+    results = await asyncio.gather(*tasks)
+
+    for chunks, text_entry, error in results:
+        if error:
+            errors.append(error)
+        else:
+            all_chunks.extend(chunks)
+            documents_text.update(text_entry)
 
     # Si hubo errores, los registramos pero continuamos con lo que se pudo procesar
     error_msg = "; ".join(errors) if errors else None
@@ -498,6 +509,13 @@ async def faq_generation_node(state: "AgentState") -> dict:
     llm_faq_count = 0
     has_llm = _get_llm_for_node() is not None
 
+    logger.info(
+        "  ⚙️  Config FAQ: LLM %s | máx. %d FAQs con LLM, resto heurística | %d chunks",
+        "disponible" if has_llm else "NO disponible (solo heurística)",
+        _MAX_LLM_FAQS,
+        len(chunks),
+    )
+
     async with AsyncSessionLocal() as db:
         for idx, chunk in enumerate(chunks):
             chunk_id = chunk.get("chroma_id", "")
@@ -518,10 +536,18 @@ async def faq_generation_node(state: "AgentState") -> dict:
             try:
                 question = ""
                 answer = ""
+                generation_method = "heuristic"
                 # Usar LLM solo para los primeros N chunks; el resto usa heurística
                 use_llm = has_llm and llm_faq_count < _MAX_LLM_FAQS
                 if use_llm:
                     llm_faq_count += 1
+                elif has_llm:
+                    logger.info(
+                        "  🧩 Chunk %d/%d: límite de %d FAQs con LLM alcanzado — heurística",
+                        idx + 1,
+                        len(chunks),
+                        _MAX_LLM_FAQS,
+                    )
 
                 if use_llm:
                     result_json = await _generate_faq_entry.ainvoke(
@@ -535,7 +561,8 @@ async def faq_generation_node(state: "AgentState") -> dict:
 
                     if payload.get("status") != "success":
                         logger.warning(
-                            "  ⚠️  generate_faq_entry falló para chunk %s: %s",
+                            "  ⚠️  generate_faq_entry falló para chunk %s: %s — "
+                            "cayendo a heurística",
                             chunk_id,
                             payload.get("error", "unknown error"),
                         )
@@ -545,6 +572,8 @@ async def faq_generation_node(state: "AgentState") -> dict:
                         faq = payload.get("faq", {})
                         question = faq.get("question", "")
                         answer = faq.get("answer", "")
+                        # La tool reporta si internamente usó LLM o su propio fallback
+                        generation_method = faq.get("generation_method", "llm")
 
                 if not use_llm:
                     # Heurística directa (sin LLM) para no exceder cuota
@@ -582,10 +611,19 @@ async def faq_generation_node(state: "AgentState") -> dict:
                     )
                     continue
 
+                # Confianza diferenciada por método de generación:
+                #   - LLM: 0.85 (respuesta redactada por el modelo)
+                #   - heurística: 0.60 (extracción de oraciones, menor calidad)
+                confidence = 0.85 if generation_method == "llm" else 0.60
+
                 # Crear Suggestion type=faq en estado pending
                 doc_uuid = uuid.UUID(doc_id)
                 description = f"Pregunta: {question}"
-                reasoning_text = f"Respuesta: {answer}"
+                reasoning_text = (
+                    f"Respuesta: {answer}\n\n"
+                    f"[Generación: {'LLM' if generation_method == 'llm' else 'heurística de oraciones'} "
+                    f"| confianza: {confidence:.2f}]"
+                )
 
                 suggestion = Suggestion(
                     document_id=doc_uuid,
@@ -593,7 +631,7 @@ async def faq_generation_node(state: "AgentState") -> dict:
                     description=description,
                     source_doc_id=doc_id,
                     source_chunk_ids=[chunk_id],
-                    confidence_score=0.85,
+                    confidence_score=confidence,
                     reasoning=reasoning_text,
                     status=SuggestionStatus.pending,
                 )
@@ -605,13 +643,16 @@ async def faq_generation_node(state: "AgentState") -> dict:
                     "document_id": doc_id,
                     "type": "faq",
                     "description": description,
-                    "confidence_score": 0.85,
+                    "confidence_score": confidence,
                     "question": question,
                     "answer": answer,
+                    "generation_method": generation_method,
                 }
                 new_suggestions.append(suggestion_data)
                 logger.info(
-                    "  ✅ FAQ generada: chunk=%s | Q: %s",
+                    "  ✅ FAQ generada (%s, confianza %.2f): chunk=%s | Q: %s",
+                    generation_method,
+                    confidence,
                     chunk_id,
                     question[:60],
                 )
@@ -686,7 +727,11 @@ async def web_search_node(state: "AgentState") -> dict:
     max_results = settings.WEB_SEARCH_MAX_RESULTS
     all_results: list[dict] = []
 
-    for query in queries:
+    for q_idx, query in enumerate(queries):
+        # Pausa entre consultas: DDG bloquea ráfagas consecutivas con 202
+        if q_idx > 0:
+            logger.info("  ⏸️  Pausa de 2s entre consultas (anti rate-limit)")
+            await asyncio.sleep(2)
         try:
             result_json = await search_web_tool.ainvoke(
                 {
@@ -703,11 +748,21 @@ async def web_search_node(state: "AgentState") -> dict:
                     len(payload.get("results", [])),
                 )
             else:
+                error_text = str(payload.get("error", ""))
                 logger.warning(
                     "  ⚠️  Búsqueda falló '%s': %s",
                     query[:50],
-                    payload.get("error", ""),
+                    error_text,
                 )
+                # Circuit breaker: si el proveedor nos está bloqueando,
+                # las siguientes consultas también fallarán — abortar ya
+                # evita desperdiciar tiempo en reintentos inútiles.
+                if "ratelimit" in error_text.lower() or "429" in error_text:
+                    logger.warning(
+                        "  🔌 Proveedor de búsqueda con rate limit — "
+                        "se omiten las consultas restantes"
+                    )
+                    break
         except Exception as e:
             logger.error("  ❌ Error en búsqueda '%s': %s", query[:50], e)
 

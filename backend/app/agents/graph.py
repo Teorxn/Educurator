@@ -103,6 +103,7 @@ def _create_llm():
         return ChatOpenAI(
             model="gpt-4o-mini",
             temperature=0,
+            max_retries=settings.LLM_MAX_RETRIES,
         )
 
     gemini_key = (settings.GEMINI_API_KEY or "").strip()
@@ -119,12 +120,16 @@ def _create_llm():
                 max_bucket_size=1,  # Sin ráfagas
             )
 
-            logger.info("Usando Google Gemini: gemini-2.5-flash (rate limited: 4 RPM)")
+            gemini_model = (settings.GEMINI_MODEL or "gemini-2.5-flash").strip()
+            logger.info(
+                "Usando Google Gemini: %s (rate limited: 4 RPM)", gemini_model
+            )
             return ChatGoogleGenerativeAI(
-                model="gemini-2.5-flash",
+                model=gemini_model,
                 temperature=0,
                 api_key=gemini_key,
                 rate_limiter=rate_limiter,
+                max_retries=settings.LLM_MAX_RETRIES,
             )
         except Exception as e:
             logger.warning("Error configurando Gemini: %s", e)
@@ -220,6 +225,27 @@ else:
     logger.info("ℹ️  ReAct agent deshabilitado — modo solo pipeline RAG")
 
 
+async def _safe_react_agent_node(state: AgentState) -> dict:
+    """Ejecuta el subgrafo ReAct tolerando fallos del LLM.
+
+    Si el proveedor agota la cuota (429 / ResourceExhausted) o falla por
+    cualquier otra razón, el pipeline NO se cae: continúa hacia
+    faq_generation (con fallback heurístico) y generate_suggestions
+    (hallazgos automáticos), y wait_human_approval restaura el estado
+    del documento. Así un fallo del LLM nunca deja documentos
+    atascados en 'processing'.
+    """
+    try:
+        return await _react_agent.ainvoke(state)
+    except Exception as e:
+        logger.warning(
+            "⚠️  react_agent falló (%s: %s) — el pipeline continúa sin agente LLM",
+            e.__class__.__name__,
+            str(e)[:200],
+        )
+        return {"error": f"react_agent: {e.__class__.__name__}"}
+
+
 # ── Enrutamiento condicional ─────────────────────────────────────────────────
 
 
@@ -264,8 +290,10 @@ def _build_graph() -> StateGraph:
     builder.add_node("wait_human_approval", wait_human_approval_node)
 
     # ── Nodo condicional: agente ──────────────────────────────────────────
+    # Se envuelve en _safe_react_agent_node para que un fallo del LLM
+    # (p. ej. cuota agotada) no tumbe la corrida completa.
     if _react_agent is not None:
-        builder.add_node("react_agent", _react_agent)
+        builder.add_node("react_agent", _safe_react_agent_node)
 
     # ── Aristas ───────────────────────────────────────────────────────────
     builder.set_entry_point("load_documents")
@@ -391,6 +419,31 @@ async def run_curation(
     """
     tid = thread_id or f"run-{uuid.uuid4().hex[:12]}"
     logger.info("🚀 Iniciando corrida de curación: thread_id=%s", tid)
+
+    # ── Resumen de configuración de la corrida ────────────────────────────
+    if _LLM is None:
+        llm_desc = "SIN LLM (modo solo-RAG: redundancia + FAQs heurísticas)"
+    else:
+        llm_desc = f"{_LLM.__class__.__name__} ({getattr(_LLM, 'model', '?')})"
+    has_tavily = bool((settings.TAVILY_API_KEY or "").strip())
+    web_chain = (
+        "tavily → duckduckgo → wikipedia"
+        if settings.WEB_SEARCH_PROVIDER == "tavily" and has_tavily
+        else (
+            "duckduckgo → tavily → wikipedia"
+            if has_tavily
+            else "duckduckgo → wikipedia"
+        )
+    )
+    logger.info("  ⚙️  LLM: %s", llm_desc)
+    logger.info("  ⚙️  Agente ReAct: %s", "activo" if _react_agent else "deshabilitado")
+    logger.info("  ⚙️  Búsqueda web: %s", web_chain)
+    logger.info(
+        "  ⚙️  Límites: %d docs/corrida | %d docs en paralelo | reintentos LLM: %d",
+        settings.MAX_DOCS_PER_CURATION,
+        settings.EMBED_CONCURRENCY,
+        settings.LLM_MAX_RETRIES,
+    )
 
     if document_ids:
         logger.info("  📋 Documentos específicos: %d proporcionados", len(document_ids))

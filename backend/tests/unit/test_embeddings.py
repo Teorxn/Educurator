@@ -65,7 +65,7 @@ class TestChunkAndEmbed:
         mock_get_model.return_value = mock_model
 
         mock_collection = MagicMock()
-        mock_collection.get.return_value = {"ids": []}  # Cache miss
+        mock_collection.get.return_value = {"ids": [], "metadatas": []}  # Cache miss
         mock_get_collection.return_value = mock_collection
 
         mock_chunk_text.return_value = [
@@ -95,8 +95,10 @@ class TestChunkAndEmbed:
         assert results[0]["category"] == "curated"
         assert results[0]["chunk_index"] == 0
 
-        # Verify embedding was generated
-        mock_model.encode.assert_called_once_with("Contenido educativo chunk 1")
+        # Verify embedding was generated (batch API: una llamada con la lista)
+        mock_model.encode.assert_called_once_with(
+            ["Contenido educativo chunk 1"], batch_size=32, show_progress_bar=False
+        )
 
         # Verify ChromaDB add was called
         mock_collection.add.assert_called_once()
@@ -120,8 +122,12 @@ class TestChunkAndEmbed:
         mock_get_model.return_value = mock_model
 
         mock_collection = MagicMock()
-        # Simulate cache hit: hash already exists
-        mock_collection.get.return_value = {"ids": ["existing_chunk_0"]}
+        # Simulate cache hit: hash already exists (la consulta en lote
+        # retorna el id existente con su hash en metadata)
+        mock_collection.get.return_value = {
+            "ids": ["existing_chunk_0"],
+            "metadatas": [{"hash": "hash_existing"}],
+        }
         mock_get_collection.return_value = mock_collection
 
         mock_chunk_text.return_value = [
@@ -163,7 +169,7 @@ class TestChunkAndEmbed:
         mock_get_model.return_value = mock_model
 
         mock_collection = MagicMock()
-        mock_collection.get.return_value = {"ids": []}  # No existing
+        mock_collection.get.return_value = {"ids": [], "metadatas": []}  # No existing
         mock_get_collection.return_value = mock_collection
 
         mock_chunk_text.return_value = [
@@ -207,7 +213,7 @@ class TestChunkAndEmbed:
         mock_get_model.return_value = mock_model
 
         mock_collection = MagicMock()
-        mock_collection.get.return_value = {"ids": []}
+        mock_collection.get.return_value = {"ids": [], "metadatas": []}
         mock_get_collection.return_value = mock_collection
 
         mock_chunk_text.return_value = [
@@ -232,7 +238,10 @@ class TestChunkAndEmbed:
         assert results[0]["chunk_index"] == 10
         assert results[1]["chunk_index"] == 11
         assert results[2]["chunk_index"] == 12
-        assert mock_collection.add.call_count == 3
+        # Batch API: un solo add con los 3 chunks
+        mock_collection.add.assert_called_once()
+        call_kwargs = mock_collection.add.call_args[1]
+        assert len(call_kwargs["ids"]) == 3
 
     @patch("app.rag.embeddings._get_embedding_model")
     @patch("app.rag.embeddings._get_collection")
@@ -251,7 +260,7 @@ class TestChunkAndEmbed:
         mock_get_model.return_value = mock_model
 
         mock_collection = MagicMock()
-        mock_collection.get.return_value = {"ids": []}
+        mock_collection.get.return_value = {"ids": [], "metadatas": []}
         mock_get_collection.return_value = mock_collection
 
         mock_chunk_text.return_value = [

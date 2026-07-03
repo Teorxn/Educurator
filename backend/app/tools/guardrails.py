@@ -202,6 +202,9 @@ class _FaqContent(BaseModel):
     answer: str
     source_chunk_id: str
     topic: str
+    # Método de generación: "llm" (con modelo) o "heuristic" (fallback por
+    # extracción de oraciones). Permite asignar confidence_score diferenciado.
+    generation_method: Literal["llm", "heuristic"] = "llm"
 
 
 class GenerateFaqSuccess(BaseModel):
@@ -331,7 +334,7 @@ class SearchWebSuccess(BaseModel):
     query: str
     results: List[WebSearchResult]
     total: int
-    provider: Literal["tavily", "duckduckgo"]
+    provider: Literal["tavily", "duckduckgo", "wikipedia"]
 
 
 class SearchWebError(BaseModel):

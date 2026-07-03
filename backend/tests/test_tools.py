@@ -288,9 +288,15 @@ class TestSuggestUpdate:
 class TestGenerateFaqEntry:
     """Generación de preguntas frecuentes."""
 
+    @patch("app.tools.registry._generate_faq_with_llm")
     @pytest.mark.asyncio
-    async def test_heuristic_success(self):
-        """Genera FAQ usando heurística cuando no hay LLM."""
+    async def test_heuristic_success(self, mock_llm_faq):
+        """Genera FAQ usando heurística cuando no hay LLM.
+
+        Se mockea _generate_faq_with_llm → None para forzar la heurística:
+        sin el mock, el test llamaría a la API real si hay key configurada.
+        """
+        mock_llm_faq.return_value = None
         chunk_content = (
             "El teorema de Pitágoras establece que en un triángulo rectángulo, "
             "el cuadrado de la hipotenusa es igual a la suma de los cuadrados "
@@ -312,9 +318,15 @@ class TestGenerateFaqEntry:
         assert payload["faq"]["source_chunk_id"] == "chunk_1"
         assert payload["faq"]["topic"] == "matemáticas"
 
+    @patch("app.tools.registry._generate_faq_with_llm")
     @pytest.mark.asyncio
-    async def test_insufficient_content(self):
-        """Retorna error si el chunk no produce oraciones válidas."""
+    async def test_insufficient_content(self, mock_llm_faq):
+        """Retorna error si el chunk no produce oraciones válidas.
+
+        Se mockea el LLM → None: la ruta heurística es la que valida
+        que el contenido sea insuficiente.
+        """
+        mock_llm_faq.return_value = None
         result = await generate_faq_entry.ainvoke(
             {
                 "chunk_id": "chunk_empty",
@@ -547,47 +559,64 @@ class TestSearchWeb:
     @patch("app.tools.registry.settings")
     @pytest.mark.asyncio
     async def test_timeout_error(self, mock_settings):
-        """Maneja timeout correctamente."""
+        """Un timeout del proveedor primario cae al fallback (Wikipedia)."""
         mock_settings.WEB_SEARCH_PROVIDER = "duckduckgo"
         mock_settings.WEB_SEARCH_TIMEOUT = 1
+        mock_settings.TAVILY_API_KEY = ""
+
+        import asyncio
 
         from app.tools.registry import search_web
 
-        with patch("app.tools.registry._DDGS_CLASS") as mock_ddgs:
-            mock_instance = MagicMock()
-            mock_ddgs.return_value = mock_instance
+        async def slow_ddg(query, max_results, timeout):
+            raise asyncio.TimeoutError()
 
-            # Simular que la llamada síncrona tarda más que el timeout
-            import asyncio
+        async def wiki_ok(query, max_results, timeout):
+            return [
+                {
+                    "title": "Artículo de respaldo",
+                    "url": "https://es.wikipedia.org/wiki/Articulo",
+                    "snippet": "Resumen del artículo",
+                    "content": "Resumen del artículo",
+                    "source_type": "web",
+                    "hash": "hash_wiki",
+                }
+            ]
 
-            async def fake_slow():
-                await asyncio.sleep(10)
-                return []
-
-            mock_instance.text.side_effect = lambda **kw: asyncio.run(asyncio.sleep(10))
-            mock_instance.text.side_effect = lambda **kw: asyncio.run(asyncio.sleep(10))
-
+        with (
+            patch("app.tools.registry._search_duckduckgo", new=slow_ddg),
+            patch("app.tools.registry._search_wikipedia", new=wiki_ok),
+        ):
             result = await search_web.ainvoke(
                 {
                     "query": "consulta lenta",
                     "max_results": 3,
                 }
             )
-            payload = json.loads(result)
+        payload = json.loads(result)
 
-            assert payload["status"] == "error"
-            assert "timeout" in payload["error"].lower()
+        # El fallback rescata la búsqueda: status success vía wikipedia
+        assert payload["status"] == "success"
+        assert payload["provider"] == "wikipedia"
+        assert payload["total"] == 1
 
     @patch("app.tools.registry.settings")
     @pytest.mark.asyncio
     async def test_error_response(self, mock_settings):
-        """Maneja errores del proveedor."""
+        """Si TODA la cadena de proveedores falla, retorna error."""
         mock_settings.WEB_SEARCH_PROVIDER = "duckduckgo"
         mock_settings.WEB_SEARCH_TIMEOUT = 10
+        mock_settings.TAVILY_API_KEY = ""
 
         from app.tools.registry import search_web
 
-        with patch("app.tools.registry._DDGS_CLASS") as mock_ddgs:
+        with (
+            patch("app.tools.registry._DDGS_CLASS") as mock_ddgs,
+            patch(
+                "app.tools.registry._search_wikipedia",
+                side_effect=Exception("Wikipedia caída"),
+            ),
+        ):
             mock_instance = MagicMock()
             mock_ddgs.return_value = mock_instance
             mock_instance.text.side_effect = Exception("Error de conexión")
@@ -600,8 +629,9 @@ class TestSearchWeb:
             )
             payload = json.loads(result)
 
-            assert payload["status"] == "error"
-            assert "Error de conexión" in payload["error"]
+        assert payload["status"] == "error"
+        # El error reportado es el del último proveedor de la cadena
+        assert "Wikipedia caída" in payload["error"]
 
 
 # =============================================================================

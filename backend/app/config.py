@@ -31,6 +31,7 @@ class Settings(BaseSettings):
     # LLM (opcional — si no se configura, el grafo funciona sin agente)
     OPENAI_API_KEY: str = ""  # También puede ir en env var OPENAI_API_KEY
     GEMINI_API_KEY: str = ""
+    GEMINI_MODEL: str = "gemini-3.1-flash-lite"  # Cambia a gemini-2.5-flash-lite si agotas cuota diaria
     HUGGINGFACE_MODEL: str = ""  # Ej: "TinyLlama/TinyLlama-1.1B-Chat-v1.0"
 
     # ChromaDB
@@ -52,6 +53,10 @@ class Settings(BaseSettings):
 
     # Curation pipeline limits
     MAX_DOCS_PER_CURATION: int = 20  # Máx. documentos por corrida de análisis
+    EMBED_CONCURRENCY: int = 4  # Máx. documentos parseados/embebidos en paralelo
+    MAX_FAQ_PER_DOC: int = 3  # Máx. FAQs (llamadas al LLM) por documento
+    LLM_MAX_CONCURRENCY: int = 2  # Máx. llamadas simultáneas al LLM
+    LLM_MAX_RETRIES: int = 4  # Reintentos con backoff ante rate limits (429)
 
     # LangGraph checkpoint persistence
     AGENT_CHECKPOINT_DB_PATH: str = "data/checkpoints/curation_graph.sqlite"

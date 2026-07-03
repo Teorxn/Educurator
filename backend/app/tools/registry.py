@@ -17,6 +17,7 @@ Tools:
 import asyncio
 import json
 import logging
+import random
 import uuid
 from typing import List, Optional
 
@@ -27,15 +28,25 @@ from app.config import settings
 from app.rag.redundancy import _cosine_similarity
 from app.tools.guardrails import ToolOutputValidationError, validate_tool_output
 
-# DuckDuckGo search — import a nivel de módulo para facilitar mocks en tests
+# DuckDuckGo search — import a nivel de módulo para facilitar mocks en tests.
+# Se prefiere `ddgs` (sucesor mantenido de duckduckgo_search: mejor
+# impersonación de navegador → muchos menos "202 Ratelimit").
 _HAS_DDGS: bool = False
 _DDGS_CLASS = None  # type: ignore
+_DDGS_LIB = ""
 try:
-    from duckduckgo_search import DDGS as _DDGS_CLASS
+    from ddgs import DDGS as _DDGS_CLASS  # type: ignore[no-redef]
 
     _HAS_DDGS = True
+    _DDGS_LIB = "ddgs"
 except ImportError:
-    pass
+    try:
+        from duckduckgo_search import DDGS as _DDGS_CLASS  # type: ignore[no-redef]
+
+        _HAS_DDGS = True
+        _DDGS_LIB = "duckduckgo_search (legacy)"
+    except ImportError:
+        pass
 
 logger = logging.getLogger(__name__)
 
@@ -379,6 +390,9 @@ async def _search_duckduckgo(query: str, max_results: int, timeout: int) -> list
 
     duckduckgo_search v7.x es síncrono; ejecutamos en un hilo con
     asyncio.to_thread() para no bloquear el event loop.
+
+    DuckDuckGo bloquea ráfagas de consultas con "202 Ratelimit", así que
+    se reintenta hasta 3 veces con backoff (2s, 4s) antes de rendirse.
     """
     if not _HAS_DDGS:
         raise ImportError(
@@ -386,15 +400,40 @@ async def _search_duckduckgo(query: str, max_results: int, timeout: int) -> list
             "Ejecuta: pip install duckduckgo_search"
         )
 
-    try:
-        raw_results = await asyncio.to_thread(
-            _DDGS_CLASS().text,  # type: ignore[union-attr]
-            keywords=query,
-            max_results=max_results,
-        )
-    except Exception as e:
-        logger.warning("DuckDuckGo search falló: %s", e)
-        raise
+    max_attempts = 3
+    raw_results = None
+    for attempt in range(1, max_attempts + 1):
+        try:
+            logger.info(
+                "  🦆 DuckDuckGo (%s) intento %d/%d: '%s'",
+                _DDGS_LIB,
+                attempt,
+                max_attempts,
+                query[:50],
+            )
+            # Primer arg posicional: compatible con ddgs 9.x ('query')
+            # y con duckduckgo_search 7.x ('keywords')
+            raw_results = await asyncio.to_thread(
+                _DDGS_CLASS().text,  # type: ignore[union-attr]
+                query,
+                max_results=max_results,
+            )
+            break
+        except Exception as e:
+            is_ratelimit = "ratelimit" in str(e).lower() or "202" in str(e)
+            if attempt == max_attempts or not is_ratelimit:
+                logger.warning(
+                    "  🦆 DuckDuckGo agotó %d intentos: %s", attempt, e
+                )
+                raise
+            wait = 2 ** attempt  # 2s, 4s
+            logger.info(
+                "  🦆 DuckDuckGo rate limit (intento %d/%d) — esperando %ds antes de reintentar",
+                attempt,
+                max_attempts,
+                wait,
+            )
+            await asyncio.sleep(wait)
 
     results: list[dict] = []
     for r in raw_results:
@@ -453,6 +492,58 @@ async def _search_tavily(query: str, max_results: int, timeout: int) -> list[dic
     return results[:max_results]
 
 
+async def _search_wikipedia(query: str, max_results: int, timeout: int) -> list[dict]:
+    """Último recurso sin API key: API pública de búsqueda de Wikipedia (es).
+
+    Wikipedia no aplica rate limits agresivos a volúmenes bajos, por lo que
+    funciona como red de seguridad cuando DuckDuckGo bloquea y no hay
+    TAVILY_API_KEY. Ideal para contenido educativo.
+    """
+    import re as _re
+
+    import httpx
+
+    params = {
+        "action": "query",
+        "list": "search",
+        "srsearch": query,
+        "format": "json",
+        "srlimit": max(1, min(max_results, 10)),
+        "utf8": 1,
+    }
+    # Wikimedia exige un User-Agent descriptivo con URL/contacto (si no → 403)
+    async with httpx.AsyncClient(
+        timeout=timeout,
+        headers={
+            "User-Agent": (
+                "Educurator/1.0 (https://github.com/Teorxn/Educurator; "
+                "educurator@example.com) httpx"
+            )
+        },
+    ) as client:
+        resp = await client.get("https://es.wikipedia.org/w/api.php", params=params)
+        resp.raise_for_status()
+        data = resp.json()
+
+    results: list[dict] = []
+    for item in data.get("query", {}).get("search", []):
+        title = item.get("title", "") or ""
+        snippet = _re.sub(r"<[^>]+>", "", item.get("snippet", "") or "")
+        url = "https://es.wikipedia.org/wiki/" + title.replace(" ", "_")
+        results.append(
+            {
+                "title": title,
+                "url": url,
+                "snippet": snippet[:300],
+                "content": snippet,
+                "source_type": "web",
+                "hash": _compute_hash(title + snippet),
+            }
+        )
+
+    return results[:max_results]
+
+
 @tool(args_schema=WebSearchInput)
 async def search_web(
     query: str,
@@ -473,60 +564,97 @@ async def search_web(
         query: Consulta de búsqueda web.
         max_results: Número máximo de resultados (1-20, default 5).
     """
-    logger.info(
-        "🌐 search_web(query='%s', max_results=%d, provider=%s)",
-        query[:60],
-        max_results,
-        settings.WEB_SEARCH_PROVIDER,
-    )
-
     provider = (settings.WEB_SEARCH_PROVIDER or "duckduckgo").strip().lower()
     timeout = settings.WEB_SEARCH_TIMEOUT
+    has_tavily = bool((settings.TAVILY_API_KEY or "").strip())
 
-    try:
-        if provider == "tavily":
-            results = await asyncio.wait_for(
-                _search_tavily(query, max_results, timeout),
-                timeout=timeout,
+    # ── Cadena de fallback ("seguro de vida") ─────────────────────────────
+    # Se intenta el proveedor preferido y se va cayendo por la cadena:
+    #   - preferido tavily     → duckduckgo → wikipedia
+    #   - preferido duckduckgo → tavily (si hay key) → wikipedia
+    # Wikipedia cierra siempre la cadena: no requiere API key y no aplica
+    # rate limits agresivos, así el nodo nunca se queda sin resultados
+    # por culpa de un solo proveedor bloqueado.
+    chain: list[str] = []
+    if provider == "tavily" and has_tavily:
+        chain = ["tavily", "duckduckgo"]
+    elif has_tavily:
+        chain = ["duckduckgo", "tavily"]
+    else:
+        chain = ["duckduckgo"]
+    chain.append("wikipedia")
+
+    logger.info(
+        "🌐 search_web(query='%s', max_results=%d) — cadena de proveedores: %s",
+        query[:60],
+        max_results,
+        " → ".join(chain),
+    )
+
+    searchers = {
+        "tavily": _search_tavily,
+        "duckduckgo": _search_duckduckgo,
+        "wikipedia": _search_wikipedia,
+    }
+
+    last_error: Exception | None = None
+    # Timeout mayor para DDG: incluye sus reintentos internos (2s+4s de backoff)
+    ddg_timeout = timeout + 10
+
+    for i, prov in enumerate(chain):
+        is_fallback = i > 0
+        if is_fallback:
+            logger.warning(
+                "🌐 Proveedor '%s' falló (%s) — cayendo a fallback '%s'",
+                chain[i - 1],
+                str(last_error)[:120],
+                prov,
             )
-        else:
-            # Default: duckduckgo
+        try:
+            effective_timeout = ddg_timeout if prov == "duckduckgo" else timeout
             results = await asyncio.wait_for(
-                _search_duckduckgo(query, max_results, timeout),
-                timeout=timeout,
+                searchers[prov](query, max_results, timeout),
+                timeout=effective_timeout,
             )
+            logger.info(
+                "🌐 Búsqueda exitosa con '%s'%s: %d resultados",
+                prov,
+                " (fallback)" if is_fallback else "",
+                len(results),
+            )
+            result = {
+                "status": "success",
+                "query": query,
+                "results": results,
+                "total": len(results),
+                "provider": prov,
+            }
+            validate_tool_output("search_web", result)
+            return json.dumps(result, ensure_ascii=False)
 
-        result = {
-            "status": "success",
-            "query": query,
-            "results": results,
-            "total": len(results),
-            "provider": provider if provider == "tavily" else "duckduckgo",
-        }
-        validate_tool_output("search_web", result)
-        return json.dumps(result, ensure_ascii=False)
+        except ToolOutputValidationError:
+            raise
+        except asyncio.TimeoutError as e:
+            logger.warning(
+                "🌐 Proveedor '%s' excedió el timeout de %ds", prov, effective_timeout
+            )
+            last_error = e
+        except Exception as e:
+            logger.warning("🌐 Proveedor '%s' falló: %s", prov, str(e)[:200])
+            last_error = e
 
-    except asyncio.TimeoutError:
-        logger.error(
-            "🌐 search_web timeout después de %ds para query: %s", timeout, query[:60]
-        )
-        error_result = {
-            "status": "error",
-            "error": f"La búsqueda web excedió el timeout de {timeout}s",
-        }
-        validate_tool_output("search_web", error_result)
-        return json.dumps(error_result, ensure_ascii=False)
-
-    except ToolOutputValidationError:
-        raise
-    except Exception as e:
-        logger.exception("Error en search_web")
-        error_result = {
-            "status": "error",
-            "error": f"Error al buscar en web: {e}",
-        }
-        validate_tool_output("search_web", error_result)
-        return json.dumps(error_result, ensure_ascii=False)
+    # Todos los proveedores de la cadena fallaron
+    logger.error(
+        "🌐 search_web sin proveedores disponibles (%s agotados) para: %s",
+        " → ".join(chain),
+        query[:60],
+    )
+    error_result = {
+        "status": "error",
+        "error": f"Error al buscar en web: {last_error}",
+    }
+    validate_tool_output("search_web", error_result)
+    return json.dumps(error_result, ensure_ascii=False)
 
 
 # ── Tool 2: compare_content ─────────────────────────────────────────────────
@@ -857,7 +985,15 @@ async def generate_faq_entry(
         faq = await _generate_faq_with_llm(chunk_content, topic)
         if faq is not None:
             question, answer = faq
+            generation_method = "llm"
+            logger.info("  🧠 FAQ generada con LLM para chunk %s", chunk_id)
         else:
+            generation_method = "heuristic"
+            logger.info(
+                "  🧩 FAQ con heurística de oraciones para chunk %s "
+                "(LLM no disponible o falló)",
+                chunk_id,
+            )
             # Fallback: heurística basada en oraciones
             sentences = re.split(r"(?<=[.!?])\s+", chunk_content.strip())
             sentences = [s.strip() for s in sentences if len(s.strip()) > 20]
@@ -897,6 +1033,7 @@ async def generate_faq_entry(
                 "answer": answer,
                 "source_chunk_id": chunk_id,
                 "topic": topic,
+                "generation_method": generation_method,
             },
         }
         validate_tool_output("generate_faq_entry", result)
@@ -914,6 +1051,49 @@ async def generate_faq_entry(
         return json.dumps(error_result)
 
 
+def _is_rate_limit_error(exc: Exception) -> bool:
+    """Detecta errores de rate limit (429) de OpenAI, Gemini o HuggingFace."""
+    status = getattr(exc, "status_code", None) or getattr(exc, "code", None)
+    if status == 429:
+        return True
+    msg = str(exc).lower()
+    return any(
+        token in msg
+        for token in (
+            "429",
+            "rate limit",
+            "ratelimit",
+            "quota",
+            "resource exhausted",
+            "resource_exhausted",
+            "too many requests",
+        )
+    )
+
+
+async def _ainvoke_llm_with_retry(llm, messages):
+    """Invoca el LLM reintentando con backoff exponencial + jitter ante 429s.
+
+    Los errores que no son de rate limit se propagan de inmediato.
+    """
+    max_retries = max(1, settings.LLM_MAX_RETRIES)
+    for attempt in range(1, max_retries + 1):
+        try:
+            return await llm.ainvoke(messages)
+        except Exception as e:
+            if attempt == max_retries or not _is_rate_limit_error(e):
+                raise
+            wait = min(30.0, (2 ** (attempt - 1)) + random.uniform(0, 1))
+            logger.warning(
+                "Rate limit del LLM (intento %d/%d), reintentando en %.1fs: %s",
+                attempt,
+                max_retries,
+                wait,
+                e,
+            )
+            await asyncio.sleep(wait)
+
+
 async def _generate_faq_with_llm(
     chunk_content: str,
     topic: str,
@@ -927,7 +1107,11 @@ async def _generate_faq_with_llm(
 
     llm = get_llm()
     if llm is None:
+        logger.info("  ℹ️  Sin LLM configurado — FAQ usará heurística")
         return None
+
+    llm_name = getattr(llm, "model", None) or llm.__class__.__name__
+    logger.info("  🧠 Invocando LLM para FAQ: %s", llm_name)
 
     from langchain_core.messages import HumanMessage, SystemMessage
 
@@ -952,7 +1136,7 @@ async def _generate_faq_with_llm(
     )
 
     try:
-        response = await llm.ainvoke([system_prompt, human_prompt])
+        response = await _ainvoke_llm_with_retry(llm, [system_prompt, human_prompt])
         if isinstance(response.content, str):
             text = response.content.strip()
         else:
@@ -965,26 +1149,41 @@ async def _generate_faq_with_llm(
                     parts.append(item.get("text", ""))
             text = " ".join(parts).strip()
 
-        # Intentar extraer pregunta y respuesta del formato "Q: ... A: ..." o similar
+        # Intentar extraer pregunta y respuesta del formato "Q: ... A: ..." o similar.
+        # Las etiquetas deben ir al inicio de línea (evita que "R" haga match
+        # dentro de "P-r-egunta") y las abreviaturas exigen ':' obligatorio.
+        # Se toleran adornos markdown (**Pregunta:**, ## Respuesta:, etc.).
         import re
 
+        def _clean(fragment: str) -> str:
+            """Quita adornos markdown residuales (asteriscos, backticks)."""
+            return re.sub(r"[*`_]+", "", fragment).strip()
+
         q_match = re.search(
-            r"(?:Pregunta|Q|Question)[:\s]*([^\n]+)", text, re.IGNORECASE
+            r"(?:^|\n)[ \t>*#\-]*(?:pregunta|question|q)\s*[:.\-]\s*\**\s*(.+)",
+            text,
+            re.IGNORECASE,
         )
         a_match = re.search(
-            r"(?:Respuesta|R|Answer|A)[:\s]*([^\n]+)",
+            r"(?:^|\n)[ \t>*#\-]*(?:respuesta|answer|r|a)\s*[:.\-]\s*\**\s*(.+)",
             text,
             re.IGNORECASE,
         )
 
         if q_match and a_match:
-            return q_match.group(1).strip(), a_match.group(1).strip()
+            question = _clean(q_match.group(1))
+            answer = _clean(a_match.group(1))
+            # Guardrail: si la "respuesta" es un duplicado de la pregunta
+            # (parseo fallido), usar el fallback por líneas.
+            if question and answer and answer not in question and question not in answer:
+                return question, answer
 
         # Fallback: usar la primera línea como pregunta, el resto como respuesta
-        lines = [line.strip() for line in text.split("\n") if line.strip()]
+        lines = [_clean(line) for line in text.split("\n") if _clean(line)]
         if len(lines) >= 2:
             return lines[0], " ".join(lines[1:])
-        return text, text
+        cleaned = _clean(text)
+        return cleaned, cleaned
 
     except Exception as e:
         logger.warning("LLM falló generando FAQ, usando fallback: %s", e)

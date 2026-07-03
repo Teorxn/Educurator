@@ -85,43 +85,44 @@ def chunk_and_embed(
     from app.rag.chunker import chunk_text
 
     chunks = chunk_text(text)
+    if not chunks:
+        return []
+
     client = _get_client()
     collection = _get_collection(client)
-
     model = _get_embedding_model()
+
+    # ── Cache: una sola consulta por lote (antes: 1 roundtrip por chunk) ──
+    existing_by_hash: dict[str, str] = {}
+    try:
+        hashes = list({c["hash"] for c in chunks})
+        existing = collection.get(
+            where={"hash": {"$in": hashes}},
+            include=["metadatas"],
+        )
+        for cid, meta in zip(existing["ids"], existing["metadatas"] or []):
+            h = (meta or {}).get("hash")
+            if h and h not in existing_by_hash:
+                existing_by_hash[h] = cid
+    except Exception as e:
+        logger.warning("Cache de hashes no disponible, se recalcula todo: %s", e)
+
     results: list[dict[str, Any]] = []
+    new_items: list[tuple[int, dict[str, Any], str]] = []
+    batch_hash_to_id: dict[str, str] = {}
+    cache_hits = 0
 
     for i, chunk in enumerate(chunks):
         chunk_hash = chunk["hash"]
+        cached_id = existing_by_hash.get(chunk_hash) or batch_hash_to_id.get(chunk_hash)
 
-        # Cache: verificar si el hash ya existe en ChromaDB
-        existing = collection.get(where={"hash": chunk_hash})
-        if existing and len(existing["ids"]) > 0:
-            chroma_id = existing["ids"][0]
-            logger.info(
-                "Cache hit for chunk hash %s (id=%s)", chunk_hash[:8], chroma_id
-            )
+        if cached_id:
+            chroma_id = cached_id
+            cache_hits += 1
         else:
-            # Generar embedding local con sentence-transformers
-            embedding = model.encode(chunk["text"]).tolist()
-
             chroma_id = f"{doc_id}_chunk_{chunk_index + i}"
-            collection.add(
-                ids=[chroma_id],
-                embeddings=[embedding],
-                documents=[chunk["text"]],
-                metadatas=[
-                    {
-                        "doc_id": doc_id,
-                        "chunk_index": chunk_index + i,
-                        "page_number": page_number or 0,
-                        "hash": chunk_hash,
-                        "token_count": chunk["token_count"],
-                        "category": category,
-                    }
-                ],
-            )
-            logger.info("Stored new embedding for chunk %s", chroma_id)
+            batch_hash_to_id[chunk_hash] = chroma_id
+            new_items.append((i, chunk, chroma_id))
 
         results.append(
             {
@@ -135,4 +136,35 @@ def chunk_and_embed(
             }
         )
 
+    # ── Embeddings en lote: un solo encode + un solo add ─────────────────
+    if new_items:
+        texts = [chunk["text"] for _, chunk, _ in new_items]
+        embeddings = model.encode(
+            texts, batch_size=32, show_progress_bar=False
+        ).tolist()
+
+        collection.add(
+            ids=[cid for _, _, cid in new_items],
+            embeddings=embeddings,
+            documents=texts,
+            metadatas=[
+                {
+                    "doc_id": doc_id,
+                    "chunk_index": chunk_index + i,
+                    "page_number": page_number or 0,
+                    "hash": chunk["hash"],
+                    "token_count": chunk["token_count"],
+                    "category": category,
+                }
+                for i, chunk, _ in new_items
+            ],
+        )
+
+    logger.info(
+        "Embeddings doc %s: %d chunks (%d nuevos, %d desde cache)",
+        doc_id,
+        len(chunks),
+        len(new_items),
+        cache_hits,
+    )
     return results

@@ -1,0 +1,21 @@
+# Python virtual env and cache
+Backend/.venv
+Backend/__pycache__
+**/__pycache__
+**/*.pyc
+**/*.pyo
+Backend/.pytest_cache
+Backend/*.egg-info
+
+# Node
+Frontend/node_modules
+Frontend/dist
+Frontend/.cache
+
+# Git
+.git
+.gitignore
+
+# Editors / OS
+**/.DS_Store
+**/.env.local

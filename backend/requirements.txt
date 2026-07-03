@@ -28,5 +28,5 @@ langchain-google-genai~=2.1.0
 langchain-core~=1.4.0
 chardet==5.2.0
 langfuse~=2.57.0
-duckduckgo_search~=7.5.1
+ddgs~=9.14  # sucesor de duckduckgo_search (impersonacion actualizada, menos 202 Ratelimit)
 tavily-python~=0.5.1

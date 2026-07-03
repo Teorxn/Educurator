@@ -20,7 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.agents.graph import run_curation
 from app.api.dependencies import get_current_user
 from app.config import settings
-from app.database import get_db
+from app.database import AsyncSessionLocal, get_db
 from app.models.models import (
     Document,
     DocumentCategory,
@@ -422,3 +422,23 @@ async def _run_auto_curation(doc_id: str) -> None:
         await run_curation(document_ids=[doc_id])
     except Exception:
         logger.exception("Error en curación automática para documento %s", doc_id)
+        # Failsafe: nunca dejar el documento atascado en 'processing'.
+        # Se restaura a 'needs_review' para que el instructor lo vea
+        # y pueda relanzar el análisis cuando quiera.
+        try:
+            async with AsyncSessionLocal() as db:
+                result = await db.execute(
+                    select(Document).where(Document.id == uuid.UUID(doc_id))
+                )
+                doc = result.scalar_one_or_none()
+                if doc and doc.status == DocumentStatus.processing:
+                    doc.status = DocumentStatus.needs_review
+                    await db.commit()
+                    logger.info(
+                        "Documento %s restaurado a 'needs_review' tras fallo del pipeline",
+                        doc_id,
+                    )
+        except Exception:
+            logger.exception(
+                "No se pudo restaurar el estado del documento %s", doc_id
+            )
