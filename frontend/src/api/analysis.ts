@@ -25,9 +25,37 @@ export interface CurationInfo {
   };
 }
 
+export interface AgentRun {
+  thread_id: string;
+  status: string;
+  triggered_by: string | null;
+  started_at: string | null;
+  finished_at: string | null;
+  duration_seconds: number | null;
+  documents_processed: number;
+  suggestions_generated: number;
+  summary: {
+    suggestions_by_type?: Record<string, number>;
+    redundancy_pairs?: number;
+    inconsistency_findings?: number;
+    pipeline_error?: string | null;
+  } | null;
+  error: string | null;
+  trace_url: string | null;
+}
+
+export interface AgentRunsResponse {
+  total: number;
+  runs: AgentRun[];
+}
+
 /** Dispara el pipeline completo de curación en segundo plano. */
 export const triggerCuration = () =>
   api.post<CurationResponse>("/api/analysis/curate");
+
+/** HU-19 — Histórico persistente de ejecuciones del agente. */
+export const getCurationRuns = (limit = 50) =>
+  api.get<AgentRunsResponse>("/api/analysis/runs", { params: { limit } });
 
 /** Consulta el estado de una corrida por su thread_id. */
 export const getCurationStatus = (threadId: string) =>

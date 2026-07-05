@@ -149,7 +149,7 @@ async def trigger_curation(
     }
 
     # Ejecutar en background
-    background_tasks.add_task(_execute_curation, tid)
+    background_tasks.add_task(_execute_curation, tid, str(current_user.id))
 
     logger.info(
         "🚀 Análisis disparado por usuario %s: thread_id=%s",
@@ -164,12 +164,12 @@ async def trigger_curation(
     }
 
 
-async def _execute_curation(tid: str) -> None:
+async def _execute_curation(tid: str, triggered_by: Optional[str] = None) -> None:
     """Ejecuta el pipeline y actualiza el estado de la corrida."""
     from app.agents.graph import run_curation
 
     try:
-        result = await run_curation(thread_id=tid)
+        result = await run_curation(thread_id=tid, triggered_by=triggered_by)
         _runs[tid]["status"] = "completed"
         _runs[tid]["result"] = _summarize_result(result)
         trace_url = result.get("_trace_url")
@@ -260,18 +260,69 @@ async def get_curation_status(
 
 @router.get("/runs")
 async def list_curation_runs(
+    limit: int = 50,
     current_user: User = Depends(get_current_user),
 ):
-    """Lista todas las corridas de análisis registradas en esta sesión."""
-    return {
-        "total": len(_runs),
-        "runs": [
-            {
-                "thread_id": tid,
-                "status": data["status"],
-                "triggered_by": data["triggered_by"],
-                "error": data.get("error"),
-            }
-            for tid, data in _runs.items()
-        ],
-    }
+    """HU-19 — Lista el histórico de corridas del agente (persistente).
+
+    Lee de la tabla agent_runs, que sobrevive reinicios del servidor.
+    Incluye fecha, estado, duración, documentos procesados, sugerencias
+    generadas y resumen por tipo.
+    """
+    from sqlalchemy import select
+
+    from app.database import AsyncSessionLocal
+    from app.models.models import AgentRun
+
+    limit = max(1, min(limit, 200))
+
+    rows: list[AgentRun] = []
+    try:
+        async with AsyncSessionLocal() as db:
+            result = await db.execute(
+                select(AgentRun).order_by(AgentRun.started_at.desc()).limit(limit)
+            )
+            rows = list(result.scalars().all())
+    except Exception as e:
+        logger.warning("No se pudo leer agent_runs de la DB: %s", e)
+
+    runs = [
+        {
+            "thread_id": r.thread_id,
+            "status": r.status.value if hasattr(r.status, "value") else r.status,
+            "triggered_by": str(r.triggered_by) if r.triggered_by else None,
+            "started_at": r.started_at.isoformat() if r.started_at else None,
+            "finished_at": r.finished_at.isoformat() if r.finished_at else None,
+            "duration_seconds": r.duration_seconds,
+            "documents_processed": r.documents_processed,
+            "suggestions_generated": r.suggestions_generated,
+            "summary": r.summary,
+            "error": r.error,
+            "trace_url": r.trace_url,
+        }
+        for r in rows
+    ]
+
+    # Corridas recién disparadas que aún no llegaron a la DB
+    # (la fila se crea dentro de run_curation, en el background task)
+    db_tids = {r["thread_id"] for r in runs}
+    pending_memory = [
+        {
+            "thread_id": tid,
+            "status": data.get("status"),
+            "triggered_by": data.get("triggered_by"),
+            "started_at": None,
+            "finished_at": None,
+            "duration_seconds": None,
+            "documents_processed": 0,
+            "suggestions_generated": 0,
+            "summary": None,
+            "error": data.get("error"),
+            "trace_url": data.get("trace_url"),
+        }
+        for tid, data in _runs.items()
+        if tid not in db_tids
+    ]
+
+    all_runs = pending_memory + runs
+    return {"total": len(all_runs), "runs": all_runs}

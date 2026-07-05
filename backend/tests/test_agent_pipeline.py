@@ -47,6 +47,20 @@ from sqlalchemy.ext.asyncio import AsyncSession
 # =============================================================================
 
 
+@pytest.fixture(autouse=True)
+def no_agent_run_persistence():
+    """Evita que run_curation escriba corridas de test en agent_runs (HU-19).
+
+    Los registros de prueba contaminarían el histórico real de ejecuciones
+    que se muestra en la página 'Ejecuciones del agente'.
+    """
+    with (
+        patch("app.agents.graph._record_run_start", new=AsyncMock()),
+        patch("app.agents.graph._record_run_end", new=AsyncMock()),
+    ):
+        yield
+
+
 @pytest.fixture
 def mock_db_session():
     """Crea una sesión de base de datos mockeada con AsyncMock."""

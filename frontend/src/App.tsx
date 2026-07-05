@@ -7,6 +7,7 @@ import DocList from "./pages/DocList";
 import Review from "./pages/Review";
 import Analytics from "./pages/Analytics";
 import ReferenceDocs from "./pages/ReferenceDocs";
+import AgentRuns from "./pages/AgentRuns";
 
 export default function App() {
   return (
@@ -18,6 +19,7 @@ export default function App() {
           <Route path="/docs" element={<DocList />} />
           <Route path="/docs/:id" element={<DocDetail />} />
           <Route path="/review" element={<Review />} />
+          <Route path="/agent-runs" element={<AgentRuns />} />
           <Route path="/analytics" element={<Analytics />} />
           <Route path="/reference-docs" element={<ReferenceDocs />} />
         </Route>

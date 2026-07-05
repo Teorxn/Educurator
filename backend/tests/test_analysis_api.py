@@ -26,6 +26,24 @@ def clear_runs():
     yield
 
 
+def _mock_empty_agent_runs_db():
+    """Factory de AsyncSessionLocal mockeada: agent_runs vacío.
+
+    Evita que GET /runs lea la DB real (HU-19 persiste corridas en
+    agent_runs; los tests deben ser deterministas e independientes
+    del contenido de la base de desarrollo).
+    """
+    session = MagicMock()
+    result = MagicMock()
+    result.scalars.return_value.all.return_value = []
+    session.execute = AsyncMock(return_value=result)
+
+    factory = MagicMock()
+    factory.return_value.__aenter__ = AsyncMock(return_value=session)
+    factory.return_value.__aexit__ = AsyncMock(return_value=False)
+    return factory
+
+
 @pytest.fixture
 def mock_user():
     """Crea un usuario simulado para inyectar como dependencia."""
@@ -193,8 +211,9 @@ async def test_get_curation_status_completed():
 async def test_list_curation_runs_empty():
     """Verifica que GET /runs retorna lista vacía cuando no hay corridas."""
     transport = ASGITransport(app=app)
-    async with AsyncClient(transport=transport, base_url="http://test") as client:
-        resp = await client.get("/api/analysis/runs")
+    with patch("app.database.AsyncSessionLocal", new=_mock_empty_agent_runs_db()):
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.get("/api/analysis/runs")
 
     assert resp.status_code == 200
     data = resp.json()
@@ -204,7 +223,11 @@ async def test_list_curation_runs_empty():
 
 @pytest.mark.asyncio
 async def test_list_curation_runs_with_data():
-    """Verifica que GET /runs retorna las corridas registradas."""
+    """Verifica que GET /runs retorna las corridas registradas.
+
+    Las corridas recién disparadas viven en _runs (memoria) hasta que
+    run_curation persiste la fila en agent_runs; el endpoint las combina.
+    """
     _runs["run-1"] = {
         "thread_id": "run-1",
         "status": "running",
@@ -219,8 +242,9 @@ async def test_list_curation_runs_with_data():
     }
 
     transport = ASGITransport(app=app)
-    async with AsyncClient(transport=transport, base_url="http://test") as client:
-        resp = await client.get("/api/analysis/runs")
+    with patch("app.database.AsyncSessionLocal", new=_mock_empty_agent_runs_db()):
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.get("/api/analysis/runs")
 
     assert resp.status_code == 200
     data = resp.json()

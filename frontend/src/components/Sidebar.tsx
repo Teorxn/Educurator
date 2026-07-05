@@ -5,6 +5,7 @@ import {
   CheckSquare,
   BarChart3,
   BookOpen,
+  Activity,
   X,
 } from "lucide-react";
 
@@ -13,6 +14,7 @@ const NAV = [
   { to: "/docs", icon: FileText, label: "Documentos" },
   { to: "/reference-docs", icon: BookOpen, label: "Documentos de referencia" },
   { to: "/review", icon: CheckSquare, label: "Revisión" },
+  { to: "/agent-runs", icon: Activity, label: "Ejecuciones del agente" },
   { to: "/analytics", icon: BarChart3, label: "Analytics" },
 ];
 

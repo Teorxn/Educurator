@@ -53,6 +53,7 @@ class Settings(BaseSettings):
 
     # Curation pipeline limits
     MAX_DOCS_PER_CURATION: int = 20  # Máx. documentos por corrida de análisis
+    FEEDBACK_CONTEXT_SIZE: int = 5  # HU-16: últimos N feedback_patterns inyectados al agente
     EMBED_CONCURRENCY: int = 4  # Máx. documentos parseados/embebidos en paralelo
     MAX_FAQ_PER_DOC: int = 3  # Máx. FAQs (llamadas al LLM) por documento
     LLM_MAX_CONCURRENCY: int = 2  # Máx. llamadas simultáneas al LLM

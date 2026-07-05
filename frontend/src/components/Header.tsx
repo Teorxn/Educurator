@@ -6,6 +6,7 @@ const TITLES: Record<string, string> = {
   "/docs": "Documentos",
   "/review": "Revisión de sugerencias",
   "/logs": "Logs del agente",
+  "/agent-runs": "Ejecuciones del agente",
   "/analytics": "Analytics",
   "/reference-docs": "Documentos de referencia",
 };

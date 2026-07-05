@@ -238,3 +238,50 @@ class FeedbackPattern(Base):
     suggestion: Mapped["Suggestion"] = relationship(
         "Suggestion", back_populates="feedback"
     )
+
+
+# ── HU-19: Ejecuciones del agente ────────────────────────────────────────────
+
+
+class AgentRunStatus(str, enum.Enum):
+    running = "running"
+    completed = "completed"
+    failed = "failed"
+
+
+class AgentRun(Base):
+    """Registro histórico de cada corrida del pipeline de curación.
+
+    HU-19 — permite consultar fecha, resultado, duración y resumen de
+    cada ejecución del agente, sobreviviendo reinicios del servidor
+    (a diferencia del dict en memoria de la API de análisis).
+    """
+
+    __tablename__ = "agent_runs"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    thread_id: Mapped[str] = mapped_column(
+        String(100), nullable=False, unique=True, index=True
+    )
+    status: Mapped[AgentRunStatus] = mapped_column(
+        SAEnum(AgentRunStatus, name="agent_run_status"),
+        nullable=False,
+        default=AgentRunStatus.running,
+    )
+    triggered_by: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id"), nullable=True
+    )
+    started_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    finished_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    duration_seconds: Mapped[float | None] = mapped_column(Float, nullable=True)
+    documents_processed: Mapped[int] = mapped_column(Integer, default=0)
+    suggestions_generated: Mapped[int] = mapped_column(Integer, default=0)
+    summary: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    trace_url: Mapped[str | None] = mapped_column(Text, nullable=True)

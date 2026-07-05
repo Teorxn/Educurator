@@ -395,6 +395,86 @@ async def _get_runtime_graph():
         return _runtime_graph
 
 
+# ── HU-19: Persistencia de corridas del agente ───────────────────────────────
+
+
+async def _record_run_start(tid: str, triggered_by: Optional[str] = None) -> None:
+    """Registra el inicio de una corrida en agent_runs (best-effort)."""
+    try:
+        import uuid as _uuid
+
+        from app.database import AsyncSessionLocal
+        from app.models.models import AgentRun, AgentRunStatus
+
+        async with AsyncSessionLocal() as db:
+            run = AgentRun(
+                thread_id=tid,
+                status=AgentRunStatus.running,
+                triggered_by=_uuid.UUID(triggered_by) if triggered_by else None,
+            )
+            db.add(run)
+            await db.commit()
+    except Exception as e:
+        logger.warning("No se pudo registrar inicio de corrida %s: %s", tid, e)
+
+
+async def _record_run_end(
+    tid: str,
+    *,
+    success: bool,
+    duration_seconds: float,
+    result: Optional[dict] = None,
+    error: Optional[str] = None,
+    trace_url: Optional[str] = None,
+) -> None:
+    """Actualiza el registro de la corrida con su resultado final (best-effort)."""
+    try:
+        from datetime import datetime, timezone
+
+        from sqlalchemy import select as _select
+
+        from app.database import AsyncSessionLocal
+        from app.models.models import AgentRun, AgentRunStatus
+
+        suggestions = (result or {}).get("suggestions", []) or []
+        doc_ids = (result or {}).get("document_ids", []) or []
+
+        # Resumen compacto por tipo de sugerencia
+        by_type: dict[str, int] = {}
+        for s in suggestions:
+            stype = s.get("type", "unknown")
+            by_type[stype] = by_type.get(stype, 0) + 1
+
+        async with AsyncSessionLocal() as db:
+            row = (
+                await db.execute(_select(AgentRun).where(AgentRun.thread_id == tid))
+            ).scalar_one_or_none()
+            if row is None:
+                return
+            row.status = (
+                AgentRunStatus.completed if success else AgentRunStatus.failed
+            )
+            row.finished_at = datetime.now(timezone.utc)
+            row.duration_seconds = round(duration_seconds, 2)
+            row.documents_processed = len(doc_ids)
+            row.suggestions_generated = len(suggestions)
+            row.summary = {
+                "suggestions_by_type": by_type,
+                "redundancy_pairs": len(
+                    (result or {}).get("redundancy_findings", []) or []
+                ),
+                "inconsistency_findings": len(
+                    (result or {}).get("inconsistency_findings", []) or []
+                ),
+                "pipeline_error": (result or {}).get("error"),
+            }
+            row.error = error
+            row.trace_url = trace_url
+            await db.commit()
+    except Exception as e:
+        logger.warning("No se pudo registrar fin de corrida %s: %s", tid, e)
+
+
 # ── Función helper para invocar el grafo ─────────────────────────────────────
 
 
@@ -403,6 +483,7 @@ async def run_curation(
     use_langfuse: bool = True,
     document_ids: Optional[list[str]] = None,
     timeout_seconds: int = 300,
+    triggered_by: Optional[str] = None,
 ) -> dict:
     """Ejecuta el pipeline completo de curación.
 
@@ -458,6 +539,16 @@ async def run_curation(
         config["callbacks"] = [langfuse_handler]
         logger.info("  📊 Tracing con Langfuse activo")
 
+    # HU-16 — Inyectar retroalimentación previa del instructor para que
+    # el agente aprenda de aprobaciones/rechazos anteriores.
+    from app.services.feedback import get_feedback_context
+
+    feedback_context = ""
+    try:
+        feedback_context = await get_feedback_context()
+    except Exception as e:
+        logger.warning("  ⚠️  No se pudo construir contexto de feedback: %s", e)
+
     initial_state: AgentState = {
         "document_ids": document_ids or [],
         "documents_text": {},
@@ -468,6 +559,7 @@ async def run_curation(
                     "Analiza los documentos cargados en el estado, usa las tools disponibles "
                     "cuando necesites evidencia y crea únicamente sugerencias pending con "
                     "source_doc_id, source_chunk_ids y confidence_score."
+                    + feedback_context
                 )
             )
         ],
@@ -479,6 +571,12 @@ async def run_curation(
         "error": None,
     }
 
+    # HU-19 — registrar la corrida en agent_runs (histórico persistente)
+    import time as _time
+
+    await _record_run_start(tid, triggered_by=triggered_by)
+    started = _time.monotonic()
+
     try:
         graph = await _get_runtime_graph()
         result = await asyncio.wait_for(
@@ -487,8 +585,17 @@ async def run_curation(
         )
         logger.info("✅ Corrida %s completada exitosamente", tid)
         # Agregar metadata de tracing al resultado
+        trace_url = None
         if langfuse_handler is not None:
-            result["_trace_url"] = f"{settings.LANGFUSE_HOST.rstrip('/')}/trace/{tid}"
+            trace_url = f"{settings.LANGFUSE_HOST.rstrip('/')}/trace/{tid}"
+            result["_trace_url"] = trace_url
+        await _record_run_end(
+            tid,
+            success=True,
+            duration_seconds=_time.monotonic() - started,
+            result=result,
+            trace_url=trace_url,
+        )
         return result
     except asyncio.TimeoutError:
         logger.error(
@@ -496,12 +603,24 @@ async def run_curation(
             tid,
             timeout_seconds,
         )
+        await _record_run_end(
+            tid,
+            success=False,
+            duration_seconds=_time.monotonic() - started,
+            error=f"Timeout de {timeout_seconds}s excedido",
+        )
         raise TimeoutError(
             f"La corrida {tid} excedió el timeout de {timeout_seconds}s. "
             f"Considera aumentar 'timeout_seconds' o reducir la cantidad de documentos."
         ) from None
     except Exception as e:
         logger.exception("❌ Error en corrida %s: %s", tid, e)
+        await _record_run_end(
+            tid,
+            success=False,
+            duration_seconds=_time.monotonic() - started,
+            error=str(e)[:2000],
+        )
         raise
 
 
