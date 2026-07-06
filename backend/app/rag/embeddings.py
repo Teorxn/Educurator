@@ -6,6 +6,7 @@ No requiere API key de OpenAI.
 """
 
 import logging
+import threading
 from typing import Any, Optional
 
 import chromadb
@@ -23,17 +24,24 @@ EMBEDDING_MODEL_NAME = "paraphrase-multilingual-MiniLM-L12-v2"
 
 # Cache del modelo (se carga una sola vez)
 _embedding_model = None
+# Lock: chunk_and_embed corre en threads (asyncio.to_thread) para varios
+# documentos en paralelo; sin lock, dos threads inicializan el modelo a la
+# vez y PyTorch falla con "Cannot copy out of meta tensor".
+_model_lock = threading.Lock()
 
 
 def _get_embedding_model():
-    """Retorna el modelo de embeddings (singleton)."""
+    """Retorna el modelo de embeddings (singleton thread-safe)."""
     global _embedding_model
     if _embedding_model is None:
-        from sentence_transformers import SentenceTransformer
+        with _model_lock:
+            if _embedding_model is None:  # double-checked locking
+                from sentence_transformers import SentenceTransformer
 
-        logger.info("Cargando modelo de embeddings: %s", EMBEDDING_MODEL_NAME)
-        _embedding_model = SentenceTransformer(EMBEDDING_MODEL_NAME)
-        logger.info("Modelo de embeddings cargado correctamente")
+                logger.info("Cargando modelo de embeddings: %s", EMBEDDING_MODEL_NAME)
+                model = SentenceTransformer(EMBEDDING_MODEL_NAME)
+                _embedding_model = model
+                logger.info("Modelo de embeddings cargado correctamente")
     return _embedding_model
 
 

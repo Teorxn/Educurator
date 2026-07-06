@@ -45,6 +45,23 @@ def _get_llm():
         return None
 
 
+def _llm_content_to_text(content) -> str:
+    """Normaliza response.content del LLM a string.
+
+    langchain-google-genai 4.x (y otros proveedores) pueden retornar el
+    contenido como lista de bloques (str | dict) en vez de string plano.
+    """
+    if isinstance(content, str):
+        return content
+    parts: list[str] = []
+    for item in content or []:
+        if isinstance(item, str):
+            parts.append(item)
+        elif isinstance(item, dict):
+            parts.append(item.get("text", ""))
+    return " ".join(parts)
+
+
 def _build_chunk_map(chunks: List[dict]) -> dict:
     """Construye un mapa chroma_id → chunk para búsqueda rápida."""
     return {c.get("chroma_id", ""): c for c in chunks if c.get("chroma_id")}
@@ -96,7 +113,7 @@ async def _evaluate_contradiction_llm(
         from langchain_core.messages import HumanMessage
 
         response = await llm.ainvoke([HumanMessage(content=prompt)])
-        content = response.content.strip()
+        content = _llm_content_to_text(response.content).strip()
         # Extraer JSON de la respuesta
         import json
 
@@ -199,7 +216,14 @@ def _prefilter_by_similarity(
             for j in range(i + 1, len(doc_chunks)):
                 emb_a = doc_chunks[i].get("embedding")
                 emb_b = doc_chunks[j].get("embedding")
-                if emb_a and emb_b:
+                # None/len explícitos: los embeddings pueden ser arrays numpy
+                # cuya truthiness es ambigua
+                if (
+                    emb_a is not None
+                    and emb_b is not None
+                    and len(emb_a) > 0
+                    and len(emb_b) > 0
+                ):
                     sim = _cosine_similarity(emb_a, emb_b)
                     if sim >= threshold:
                         candidates.append((doc_chunks[i], doc_chunks[j]))
@@ -251,7 +275,7 @@ async def _extract_terms_from_text(text: str, llm) -> List[dict]:
         from langchain_core.messages import HumanMessage
 
         response = await llm.ainvoke([HumanMessage(content=prompt)])
-        content = response.content.strip()
+        content = _llm_content_to_text(response.content).strip()
         import json
 
         json_match = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", content, re.DOTALL)

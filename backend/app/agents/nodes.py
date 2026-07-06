@@ -157,6 +157,11 @@ def _validate_suggestion_fields(args: dict) -> None:
 async def load_documents_node(state: "AgentState") -> dict:
     """Carga documentos curated con status needs_review desde Postgres.
 
+    Si la corrida trae document_ids explícitos (p. ej. auto-curación al
+    subir UN documento), se procesan SOLO esos — sin este filtro, cada
+    upload reprocesaba todos los documentos pendientes del sistema.
+    Sin ids explícitos, busca todos los needs_review (corrida global).
+
     Solo procesa documentos con category=curated (los reference se
     procesan por separado vía process_reference_documents).
     Marca los documentos como 'processing' para evitar
@@ -167,14 +172,29 @@ async def load_documents_node(state: "AgentState") -> dict:
     logger.info("=" * 50)
 
     max_docs = getattr(settings, "MAX_DOCS_PER_CURATION", 20)
+    requested_ids = state.get("document_ids") or []
 
     async with AsyncSessionLocal() as db:
-        result = await db.execute(
+        query = (
             select(Document)
             .where(Document.status == DocumentStatus.needs_review)
             .where(Document.category == DocumentCategory.curated)
             .limit(max_docs)
         )
+        if requested_ids:
+            requested_uuids = []
+            for rid in requested_ids:
+                try:
+                    requested_uuids.append(uuid.UUID(rid))
+                except ValueError:
+                    logger.warning("  ⚠️  document_id inválido ignorado: %s", rid)
+            query = query.where(Document.id.in_(requested_uuids))
+            logger.info(
+                "  🎯 Corrida acotada a %d documento(s) solicitados",
+                len(requested_uuids),
+            )
+
+        result = await db.execute(query)
         docs = list(result.scalars().all())
 
         if not docs:

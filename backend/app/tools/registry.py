@@ -277,6 +277,22 @@ def _compute_embedding(text: str) -> list[float]:
     return model.encode(text).tolist()
 
 
+def _safe_embedding(container: dict, index: int):
+    """Extrae embeddings[index] de un resultado de ChromaDB de forma segura.
+
+    Las versiones recientes del cliente retornan arrays numpy, cuya
+    truthiness es ambigua ("The truth value of an array..."). Aquí se
+    valida con None/len explícitos.
+    """
+    embs = container.get("embeddings")
+    if embs is None or len(embs) <= index:
+        return None
+    emb = embs[index]
+    if emb is None or len(emb) == 0:
+        return None
+    return emb
+
+
 def _get_chroma_collection():
     """Obtiene la colección de ChromaDB."""
     from app.rag.embeddings import get_chroma_collection
@@ -705,11 +721,11 @@ async def compare_content(chunk_id_a: str, chunk_id_b: str) -> str:
         meta_b = result_b["metadatas"][0] if result_b["metadatas"] else {}
 
         # Calcular similitud coseno entre embeddings
-        emb_a = result_a["embeddings"][0] if result_a.get("embeddings") else None
-        emb_b = result_b["embeddings"][0] if result_b.get("embeddings") else None
+        emb_a = _safe_embedding(result_a, 0)
+        emb_b = _safe_embedding(result_b, 0)
 
         similarity = 0.0
-        if emb_a and emb_b:
+        if emb_a is not None and emb_b is not None:
             similarity = _cosine_similarity(emb_a, emb_b)
         else:
             # Fallback: calcular embedding sobre la marcha
@@ -812,20 +828,18 @@ async def detect_conflict(doc_id_a: str, doc_id_b: str) -> str:
         for i in range(len(chunks_a["ids"])):
             if comparisons >= max_comparisons:
                 break
-            emb_a = chunks_a["embeddings"][i] if chunks_a.get("embeddings") else None
+            emb_a = _safe_embedding(chunks_a, i)
             content_a = chunks_a["documents"][i] if chunks_a["documents"] else ""
             meta_a = chunks_a["metadatas"][i] if chunks_a["metadatas"] else {}
 
             for j in range(len(chunks_b["ids"])):
                 if comparisons >= max_comparisons:
                     break
-                emb_b = (
-                    chunks_b["embeddings"][j] if chunks_b.get("embeddings") else None
-                )
+                emb_b = _safe_embedding(chunks_b, j)
                 content_b = chunks_b["documents"][j] if chunks_b["documents"] else ""
 
                 similarity = 0.0
-                if emb_a and emb_b:
+                if emb_a is not None and emb_b is not None:
                     similarity = _cosine_similarity(emb_a, emb_b)
 
                 # Si alta similitud pero contenido diferente, es potencial conflicto
@@ -1451,9 +1465,7 @@ async def _load_chunks_for_inconsistency(
         for i, chroma_id in enumerate(all_chunks["ids"]):
             metadata = all_chunks["metadatas"][i] if all_chunks.get("metadatas") else {}
             doc_text = all_chunks["documents"][i] if all_chunks.get("documents") else ""
-            embedding = (
-                all_chunks["embeddings"][i] if all_chunks.get("embeddings") else None
-            )
+            embedding = _safe_embedding(all_chunks, i)
 
             chunk = {
                 "chroma_id": chroma_id,
