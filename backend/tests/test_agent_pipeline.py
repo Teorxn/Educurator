@@ -714,7 +714,8 @@ class TestFaqGenerationNode:
             assert sug.type == SuggestionType.faq
             assert sug.status == SuggestionStatus.pending
 
-        mock_db_session.commit.assert_awaited_once()
+        # Commit por FAQ (aísla fallos de fila) + commit final del nodo
+        assert mock_db_session.commit.await_count >= 2
 
     @patch("app.agents.nodes.AsyncSessionLocal")
     @pytest.mark.asyncio

@@ -6,6 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.api import analysis, analytics, auth, docs, reference_docs, suggestions
 from app.config import settings
+from app.utils.rate_limit import SlidingWindowRateLimiter
 
 
 @asynccontextmanager
@@ -23,6 +24,9 @@ app = FastAPI(
     version="1.0.0",
     lifespan=lifespan,
 )
+
+# ── Rate limiting (#33): login y upload, ventana deslizante por IP ──────────
+app.add_middleware(SlidingWindowRateLimiter)
 
 # ── CORS ────────────────────────────────────────────────────────────────────
 app.add_middleware(

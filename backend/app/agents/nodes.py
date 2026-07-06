@@ -533,6 +533,19 @@ async def faq_generation_node(state: "AgentState") -> dict:
                 )
                 continue
 
+            # Guarda: solo generar FAQs para documentos de ESTA corrida.
+            # Un chroma_id ajeno (p. ej. de un documento borrado que quedó
+            # en el vector store) provocaría un FK violation al persistir.
+            run_doc_ids = set(state.get("document_ids", []))
+            if run_doc_ids and doc_id not in run_doc_ids:
+                logger.warning(
+                    "  ⚠️  Chunk %s pertenece a un documento fuera de la corrida "
+                    "(%s) — se omite",
+                    chunk_id,
+                    doc_id,
+                )
+                continue
+
             try:
                 question = ""
                 answer = ""
@@ -636,7 +649,9 @@ async def faq_generation_node(state: "AgentState") -> dict:
                     status=SuggestionStatus.pending,
                 )
                 db.add(suggestion)
-                await db.flush()
+                # Commit por FAQ (expire_on_commit=False): si una fila
+                # posterior falla, las FAQs ya persistidas no se pierden.
+                await db.commit()
 
                 suggestion_data = {
                     "id": str(suggestion.id),
@@ -667,6 +682,13 @@ async def faq_generation_node(state: "AgentState") -> dict:
                 logger.warning(
                     "  ⚠️  Error generando FAQ para chunk %s: %s", chunk_id, e
                 )
+                # Un flush fallido (p. ej. FK violation) envenena la sesión:
+                # sin rollback, TODOS los flush/commit posteriores fallarían
+                # con PendingRollbackError y se perderían las FAQs válidas.
+                try:
+                    await db.rollback()
+                except Exception:
+                    pass
 
         await db.commit()
 
@@ -935,6 +957,11 @@ async def generate_suggestions_node(state: "AgentState") -> dict:
 
             except Exception as e:
                 logger.error("  ❌ Error creando sugerencia de redundancia: %s", e)
+                # Desenvenenar la sesión tras un flush fallido (FK, etc.)
+                try:
+                    await db.rollback()
+                except Exception:
+                    pass
 
         # ── 3. Procesar hallazgos de inconsistencia automática ───────────────
         for finding in inconsistency_findings:
@@ -1029,6 +1056,11 @@ async def generate_suggestions_node(state: "AgentState") -> dict:
 
             except Exception as e:
                 logger.error("  ❌ Error creando sugerencia de inconsistencia: %s", e)
+                # Desenvenenar la sesión tras un flush fallido (FK, etc.)
+                try:
+                    await db.rollback()
+                except Exception:
+                    pass
 
         await db.commit()
 
@@ -1043,9 +1075,20 @@ async def generate_suggestions_node(state: "AgentState") -> dict:
             break
 
     logger.info("  📝 Razonamiento del agente: %d caracteres", len(reasoning_text))
-    logger.info("  📊 Sugerencias totales generadas: %d", len(suggestions))
 
-    return {"suggestions": suggestions}
+    # Conservar las sugerencias ya presentes en el estado (p. ej. las FAQs
+    # de faq_generation_node, que corre antes): sin esto se pierden del
+    # estado final y los contadores del histórico quedan incompletos.
+    existing = state.get("suggestions", [])
+    combined = existing + suggestions
+    logger.info(
+        "  📊 Sugerencias totales: %d (%d previas + %d de este nodo)",
+        len(combined),
+        len(existing),
+        len(suggestions),
+    )
+
+    return {"suggestions": combined}
 
 
 # ── Nodo 5: wait_human_approval_node ─────────────────────────────────────────

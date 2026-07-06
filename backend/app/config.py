@@ -28,6 +28,10 @@ class Settings(BaseSettings):
     REFERENCE_DOCS_DIR: str = "data/references"
     MAX_FILE_SIZE: int = 52_428_800  # 50 MB
 
+    # OCR para PDFs escaneados (rutas locales; en Docker vienen en PATH)
+    POPPLER_PATH: str = ""  # Ej Windows: C:\...\poppler-25.07.0\Library\bin
+    TESSERACT_CMD: str = ""  # Ej Windows: C:\Program Files\Tesseract-OCR\tesseract.exe
+
     # LLM (opcional — si no se configura, el grafo funciona sin agente)
     OPENAI_API_KEY: str = ""  # También puede ir en env var OPENAI_API_KEY
     GEMINI_API_KEY: str = ""
@@ -37,6 +41,11 @@ class Settings(BaseSettings):
     # ChromaDB
     CHROMADB_HOST: str = "localhost"
     CHROMADB_PORT: int = 8001
+
+    # Rate limiting de la API (#33) — ventana deslizante por IP
+    RATE_LIMIT_ENABLED: bool = True
+    RATE_LIMIT_LOGIN: str = "5/60"  # intentos de login por IP: 5 cada 60s
+    RATE_LIMIT_UPLOAD: str = "20/60"  # subidas por IP: 20 cada 60s
 
     # Redundancy detection
     REDUNDANCY_THRESHOLD: float = (

@@ -1,7 +1,7 @@
 # EduCurator
 
-Sistema agéntico de curación de bases de conocimiento para cursos universitarios.  
-Los docentes suben documentos (PDF, DOCX, TXT), el sistema los procesa con un pipeline RAG y genera sugerencias automáticas de redundancias, conflictos y FAQs para revisión humana.
+Sistema agéntico de curación de bases de conocimiento para cursos universitarios.
+Los docentes suben documentos (PDF, DOCX, TXT), un agente LangGraph los procesa con un pipeline RAG y genera sugerencias de redundancias, conflictos, inconsistencias y FAQs — siempre con evidencia trazable y **revisión humana obligatoria**: el agente nunca modifica contenido oficial.
 
 ---
 
@@ -12,119 +12,93 @@ Los docentes suben documentos (PDF, DOCX, TXT), el sistema los procesa con un pi
 | Backend | FastAPI + SQLAlchemy 2.0 (async) + Alembic |
 | Base de datos | PostgreSQL 16 |
 | Vector store | ChromaDB |
-| Embeddings | sentence-transformers (Hugging Face local) |
-| Agente (pendiente) | LangGraph |
-| Observabilidad | Langfuse |
+| Embeddings | sentence-transformers (local, multilingüe) |
+| Agente | LangGraph (grafo de 9 nodos + subagente ReAct con 8 tools) |
+| LLM | Gemini (rate-limited 4 RPM) / OpenAI / HuggingFace — opcional |
+| Búsqueda web | ddgs (DuckDuckGo) → Tavily → Wikipedia (cadena de fallback) |
+| Observabilidad | Langfuse (trazas) + histórico persistente de ejecuciones |
 | Frontend | React 19 + Vite + Tailwind CSS 4 |
 
 ---
 
-## Estructura
+## El agente
 
 ```
-Educurator/
-├── frontend/                   # React + Vite + Tailwind
-│   └── src/
-│       ├── pages/              # Login, Upload, DocList, Review, Analytics
-│       ├── components/         # DocBadge, Header, Sidebar
-│       └── api/                # Clientes HTTP hacia FastAPI
-├── backend/
-│   ├── app/
-│   │   ├── api/                # Routers: auth, docs, suggestions, analytics
-│   │   ├── agents/             # LangGraph workflow (pendiente Sprint 2)
-│   │   ├── tools/              # Tool calling (pendiente Sprint 2)
-│   │   ├── rag/                # chunker.py, embeddings.py
-│   │   ├── models/             # SQLAlchemy models
-│   │   ├── schemas/            # Pydantic schemas
-│   │   ├── services/           # (pendiente Sprint 2)
-│   │   └── utils/              # parser.py, security.py
-│   └── alembic/                # Migraciones PostgreSQL
-├── data/
-│   ├── uploads/                # Archivos subidos por docentes
-│   ├── references/             # Documentos de referencia (reglamentos, normas)
-│   ├── processed/
-│   └── archived/
-├── docker-compose.yml          # Perfiles: "default" (infra) y "full" (infra + api)
-└── Dockerfile                  # Build de la API
+START → load_documents ─(sin docs)→ END
+          │ (con docs)
+          ▼
+   chunk_and_embed ──→ redundancy_detection ──┐
+          │                                    ├──→ web_search
+          └──→ inconsistency_detection ────────┘        │
+                                                        ▼
+                    react_agent (ReAct + 8 tools, si hay LLM)
+                                                        │
+                    faq_generation → generate_suggestions
+                                                        │
+                              wait_human_approval → END
 ```
+
+**Tools del agente ReAct:** `search_documents`, `compare_content`, `detect_conflict`, `detect_redundancy`, `suggest_update`, `generate_faq_entry`, `search_web`, `log_action`.
+
+**Resiliencia integrada:**
+- Si el LLM agota cuota (429), el pipeline continúa en modo heurístico y el documento nunca queda atascado en `processing`.
+- Búsqueda web con reintentos + cadena de fallback (`duckduckgo → tavily → wikipedia`).
+- Sesión de DB por documento + embeddings en lote con cache por hash.
+- El agente aprende del feedback: los últimos N rechazos/aprobaciones del instructor se inyectan a su prompt (HU-16).
 
 ---
 
-## Requisitos previos
+## Levantar el proyecto
 
-- [Docker Desktop](https://www.docker.com/products/docker-desktop/) (recomendado)
-- Node.js 20+ (solo para correr el frontend en modo dev)
-- Python 3.12+ (solo para desarrollo local sin Docker)
-- (Opcional) API key de OpenAI, Google Gemini, o modelo local de Hugging Face
+### Requisitos
 
----
+- [Docker Desktop](https://www.docker.com/products/docker-desktop/)
+- Node.js 20+ y Python 3.12+ (para el modo desarrollo local)
+- (Opcional) API key de Gemini u OpenAI — sin ella el pipeline corre en modo solo-RAG
 
-## Opción A — Levantar con Docker (recomendado)
-
-### 1. Clonar y configurar variables de entorno
+### Opción A — Infra en Docker + backend/frontend locales (recomendada para desarrollo)
 
 ```bash
 git clone https://github.com/Teorxn/Educurator.git
 cd Educurator
-cp .env.example .env
-```
+cp .env.example .env          # completar SECRET_KEY, LANGFUSE_SECRET/SALT
 
-Editar `.env` (raíz del proyecto) y completar según el LLM que uses.
-
-### 2. Elegir modo de ejecución
-
-El proyecto usa un solo `docker-compose.yml` con **perfiles**.
-
-#### Solo infraestructura (db, chromadb, langfuse)
-
-Backend y frontend se ejecutan en local desde la terminal:
-
-```bash
+# 1. Infraestructura (Postgres 5434, ChromaDB 8001, Langfuse 3000)
 docker compose up -d
+
+# 2. Backend
+cd backend
+python -m venv .venv
+.venv\Scripts\activate        # Windows  |  source .venv/bin/activate (Linux/Mac)
+pip install -r requirements.txt
+cp .env.example .env          # DATABASE_URL → localhost:5434 + GEMINI_API_KEY
+alembic upgrade head
+python seed.py
+uvicorn app.main:app --reload --port 8000
+
+# 3. Frontend (otra terminal)
+cd frontend
+npm install
+npm run dev                   # http://localhost:5173
 ```
 
-| Servicio | URL local |
+### Opción B — Stack completo en Docker
+
+```bash
+docker compose --profile full up -d --build
+docker compose exec api alembic upgrade head
+docker compose exec api python seed.py
+```
+
+| Servicio | URL |
 |---|---|
+| Frontend | http://localhost:5173 |
+| API + Swagger | http://localhost:8000/docs |
 | PostgreSQL | localhost:5434 |
-| ChromaDB | http://localhost:8001 |
+| ChromaDB | localhost:8001 |
 | Langfuse | http://localhost:3000 |
 
-#### Stack completo (infra + api)
-
-```bash
-docker compose --profile full up -d
-```
-
-| Servicio | URL local |
-|---|---|
-| FastAPI API | http://localhost:8000 |
-| Swagger UI | http://localhost:8000/docs |
-| PostgreSQL | localhost:5434 |
-| ChromaDB | http://localhost:8001 |
-| Langfuse | http://localhost:3000 |
-
-### 3. Verificar healthchecks
-
-```bash
-docker compose ps
-# Todos los servicios deben mostrar "healthy"
-```
-
-### 4. Correr las migraciones
-
-Con el stack completo:
-
-```bash
-docker compose --profile full exec api alembic upgrade head
-```
-
-### 5. Crear usuarios iniciales (seed)
-
-```bash
-docker compose --profile full exec api python seed.py
-```
-
-Usuarios creados:
+### Usuarios seed
 
 | Email | Password | Rol |
 |---|---|---|
@@ -133,232 +107,149 @@ Usuarios creados:
 
 ---
 
-## Opción B — Desarrollo local (sin Docker)
+## Flujo de uso
 
-### Backend
-
-```bash
-cd backend
-
-# Crear entorno virtual
-python -m venv .venv
-.venv\Scripts\activate        # Windows
-# source .venv/bin/activate   # Linux/Mac
-
-# Instalar dependencias
-pip install -r requirements.txt
-
-# Asegúrate de tener el .env en la raíz del proyecto (cp ../.env.example ../.env)
-# y que DATABASE_URL apunte a localhost:5434 (ya viene así por defecto)
-
-# Correr migraciones
-alembic upgrade head
-
-# Seed de usuarios
-python seed.py
-
-# Iniciar servidor
-uvicorn app.main:app --reload --port 8000
-```
-
-> **Nota Windows:** Las migraciones usan `psycopg2` (driver síncrono). La API en runtime usa `asyncpg`. Ambos deben estar instalados (están en `requirements.txt`).
-
-### Frontend
-
-```bash
-cd frontend
-npm install
-npm run dev
-```
-
-El frontend corre en http://localhost:5173 y apunta al backend en `http://localhost:8000`.
-
----
-
-## Opción C — Docker solo para infraestructura (desarrollo mixto)
-
-Útil para desarrollar el backend localmente con Postgres y ChromaDB en Docker:
-
-```bash
-docker compose up -d
-```
-
-Postgres queda en `localhost:5434` (puerto alternativo para no colisionar con instalaciones locales).  
-El `.env` ya viene con la URL correcta para este modo.
-
-Luego corre el backend y frontend en local (ver Opción B).
+1. **Login** como instructor o admin.
+2. **Subir documento** (PDF/DOCX/TXT, máx. 50 MB) — el agente se dispara automáticamente en segundo plano.
+3. El agente lee, divide, vectoriza, detecta redundancias/conflictos y propone FAQs — todo como sugerencias `pending` con evidencia (chunks fuente), razonamiento y % de confianza.
+4. **Revisión**: aprobar o rechazar cada sugerencia (el rechazo exige motivo, que alimenta el aprendizaje del agente).
+5. **Ejecuciones del agente**: histórico persistente de corridas (fecha, duración, estado, resumen) + botón para disparar el análisis manualmente.
+6. **Analytics**: KPIs, distribución de sugerencias y tasa de aprobación.
 
 ---
 
 ## API — Endpoints principales
 
-### Autenticación
 ```
-POST /auth/login          → { access_token, token_type }
+POST  /auth/login                          → JWT (rate limit: 5/min por IP)
+
+GET   /api/docs                            → lista (filtros: status, category)
+POST  /api/docs/upload                     → subir + auto-curación (rate limit: 20/min)
+GET   /api/docs/{id}                       → detalle
+GET   /api/docs/{id}/history               → audit trail inmutable
+DELETE /api/docs/{id}                      → eliminar documento
+
+GET   /api/suggestions                     → filtros: status, type, document_id
+POST  /api/suggestions/{id}/approve        → aprueba (history + feedback_pattern)
+POST  /api/suggestions/{id}/reject         → rechaza con motivo obligatorio
+POST  /api/suggestions/{id}/feedback       → comentario libre del instructor
+
+POST  /api/analysis/curate                 → dispara el pipeline (instructor/admin)
+GET   /api/analysis/status/{thread_id}     → estado de una corrida
+GET   /api/analysis/runs                   → histórico persistente de ejecuciones
+GET   /api/analysis/info                   → LLM, tools y tracing configurados
+
+GET   /api/reference-docs                  → corpus de referencia del agente
+GET   /api/analytics                       → KPIs y tasa de aprobación
+GET   /api/users · POST /api/users · PATCH /api/users/{id}/role   (admin)
+GET   /health
 ```
 
-### Documentos
-```
-GET  /api/docs                  → lista con paginación y filtro por status/category
-GET  /api/docs/{id}             → detalle de un documento
-POST /api/docs/upload           → subir PDF, DOCX o TXT (max 50 MB)
-PATCH /api/docs/{id}            → cambiar status manualmente
-GET  /api/docs/{id}/history     → historial de cambios (audit trail)
-```
-
-> El parámetro `category` en `GET /api/docs` permite filtrar por tipo:
-> `curated` (default), `reference`, o `all`.
-
-### Documentos de Referencia
-```
-POST /api/reference-docs/upload   → subir documento como referencia
-GET  /api/reference-docs          → listar referencias con paginación
-GET  /api/reference-docs/{id}     → detalle de una referencia
-DELETE /api/reference-docs/{id}   → eliminar referencia y sus chunks
-POST /api/reference-docs/process  → reprocesar referencias pendientes
-```
-
-Los documentos de referencia (reglamentos, normas, FAQs, libros de texto)
-se procesan sin generar sugerencias. El agente los consulta como fuente
-confiable para contrastar con los documentos curados.
-
-### Sugerencias
-```
-GET  /api/suggestions              → lista con filtros (status, type, document_id)
-POST /api/suggestions/{id}/approve → aprobar (escribe history + feedback_pattern)
-POST /api/suggestions/{id}/reject  → rechazar con motivo obligatorio
-POST /api/suggestions/{id}/feedback → retroalimentación adicional
-```
-
-> Las sugerencias que usan documentos de referencia como fuente muestran
-> el badge `📚 Fuente: Referencia` y el campo `source_type: "reference"`.
-
-### Analytics
-```
-GET /api/analytics   → KPIs: total docs, por estado, sugerencias, tasa aprobación
-```
-
-### Admin (rol admin requerido)
-```
-GET   /api/users           → listar usuarios
-POST  /api/users           → crear usuario
-PATCH /api/users/{id}/role → cambiar rol
-```
-
-### Health
-```
-GET /health → { status: "ok" }
-```
-
-Documentación interactiva completa: **http://localhost:8000/docs**
+Documentación interactiva: **http://localhost:8000/docs**
 
 ---
 
-## Base de datos — Tablas
-
-| Tabla | Descripción |
-|---|---|
-| `users` | Docentes y admins con rol y estado activo |
-| `documents` | Documentos subidos con status, category (curated/reference) y path |
-| `document_chunks` | Chunks del pipeline RAG (512 tokens, overlap 50) |
-| `suggestions` | Sugerencias del agente: redundancy, conflict, faq, update |
-| `document_history` | Audit trail inmutable (INSERT only) |
-| `feedback_patterns` | Retroalimentación del instructor para mejorar el agente |
-
-### Diagrama simplificado
-
-```
-users ──< documents ──< document_chunks
-      ──< suggestions ──< feedback_patterns
-           │
-           └──< document_history
-```
-
----
-
-## Flujo del sistema
-
-```
-Docente sube archivo
-       │
-       ▼
-POST /api/docs/upload
-  → valida MIME (no confía en extensión)
-  → guarda en data/uploads/
-  → crea registro en documents (status: needs_review)
-       │
-       ▼
-[Pipeline RAG — pendiente wiring]
-  → parser.py extrae texto
-  → chunker.py divide en chunks de 512 tokens
-  → embeddings.py vectoriza y guarda en ChromaDB
-  → agente LangGraph detecta redundancias/conflictos
-  → crea Suggestion(s) en DB
-       │
-       ▼
-Docente revisa en /review
-  → aprueba o rechaza con motivo
-  → se escribe DocumentHistory
-  → se crea FeedbackPattern (para mejorar futuras sugerencias)
-```
-
----
-
-## Variables de entorno — referencia completa
+## Variables de entorno — referencia
 
 ```env
-# Base de datos
-DATABASE_URL=postgresql+asyncpg://postgres:postgres@localhost:5432/educurator
+# Base de datos (backend local → puerto 5434 del compose)
+DATABASE_URL=postgresql+asyncpg://postgres:postgres@localhost:5434/educurator
 
 # JWT
 SECRET_KEY=secreto-largo-y-aleatorio
-ALGORITHM=HS256
-ACCESS_TOKEN_EXPIRE_MINUTES=30
 
-# CORS
-ALLOWED_ORIGINS=["http://localhost:5173","http://localhost:3000"]
-
-# Uploads
-UPLOAD_DIR=data/uploads
-REFERENCE_DOCS_DIR=data/references
-MAX_FILE_SIZE=52428800        # 50 MB
-
-# LLM — elige SOLO una:
+# LLM — elige una (sin ninguna, el pipeline corre en modo solo-RAG):
+GEMINI_API_KEY=...
+GEMINI_MODEL=gemini-2.5-flash-lite     # la cuota free-tier es POR modelo
 # OPENAI_API_KEY=sk-...
-# GEMINI_API_KEY=tu-api-key-de-gemini
 # HUGGINGFACE_MODEL=TinyLlama/TinyLlama-1.1B-Chat-v1.0
 
-# Langfuse (Sprint 2)
-# LANGFUSE_PUBLIC_KEY=
-# LANGFUSE_SECRET_KEY=
+# ChromaDB
+CHROMADB_HOST=localhost
+CHROMADB_PORT=8001
+
+# Búsqueda web
+WEB_SEARCH_PROVIDER=duckduckgo         # o "tavily"
+TAVILY_API_KEY=                        # opcional: se inserta en la cadena de fallback
+
+# Pipeline
+MAX_DOCS_PER_CURATION=20
+EMBED_CONCURRENCY=4                    # docs parseados/embebidos en paralelo
+MAX_FAQ_PER_DOC=3                      # FAQs con LLM por documento
+LLM_MAX_CONCURRENCY=2
+LLM_MAX_RETRIES=4                      # backoff exponencial ante 429
+FEEDBACK_CONTEXT_SIZE=5                # patrones de feedback inyectados al agente
+REDUNDANCY_THRESHOLD=0.90
+
+# Rate limiting de la API
+RATE_LIMIT_ENABLED=true
+RATE_LIMIT_LOGIN=5/60
+RATE_LIMIT_UPLOAD=20/60
+
+# Langfuse (opcional)
+LANGFUSE_PUBLIC_KEY=
+LANGFUSE_SECRET_KEY=
+LANGFUSE_HOST=http://localhost:3000
 ```
+
+---
+
+## Base de datos
+
+| Tabla | Descripción |
+|---|---|
+| `users` | Docentes y admins con rol y estado |
+| `documents` | Documentos con status, categoría (curated/reference) y path |
+| `document_chunks` | Chunks del pipeline RAG (512 tokens, overlap 50) |
+| `suggestions` | Sugerencias: redundancy, conflict, faq, update — con evidencia |
+| `document_history` | Audit trail inmutable (solo INSERT) |
+| `feedback_patterns` | Feedback del instructor → aprendizaje del agente (HU-16) |
+| `agent_runs` | Histórico persistente de ejecuciones del agente (HU-19) |
+
+---
+
+## Tests
+
+```bash
+cd backend
+python -m pytest tests/ -q
+```
+
+- Unit tests: parser, chunker, embeddings, tools, guardrails, inconsistencias, rate limiting.
+- Integración: flujo completo upload → pipeline → sugerencia → aprobación (`tests/test_integration_flow.py`).
+- Los tests **no** consumen cuota de LLM ni servicios externos (todo mockeado).
+
+---
+
+## Producción — HTTPS y hardening
+
+La API no termina TLS por sí misma: en producción va detrás de un reverse proxy
+(nginx, Caddy o Traefik) que maneja HTTPS. Ejemplo mínimo con Caddy:
+
+```
+educurator.midominio.com {
+    reverse_proxy /api/* api:8000
+    reverse_proxy /auth/* api:8000
+    reverse_proxy frontend:5173
+}
+```
+
+Checklist de producción:
+- [x] Rate limiting de login/upload (middleware propio, configurable por env)
+- [x] Rate limiting del LLM (4 RPM Gemini free tier) y de búsqueda web
+- [x] Validación MIME real de archivos (magic bytes, no extensión)
+- [x] JWT con expiración + roles
+- [ ] TLS en reverse proxy (Caddy/nginx + Let's Encrypt)
+- [ ] `SECRET_KEY` y `LANGFUSE_SECRET/SALT` únicos por entorno
+- [ ] Con múltiples réplicas: mover rate limiting a Redis o al proxy
 
 ---
 
 ## Comandos útiles
 
 ```bash
-# Ver logs de la API
-docker compose --profile full logs -f api
-
-# Acceder a PostgreSQL
+docker compose logs -f api                     # logs de la API
 docker compose exec db psql -U postgres -d educurator
-
-# Revertir todas las migraciones
-alembic downgrade base
-
-# Apagar y borrar volúmenes
-docker compose down -v
+alembic upgrade head                           # migraciones
+docker compose down -v                         # apagar y borrar volúmenes
 ```
-
----
-
-## Sprint 2 — Pendiente
-
-- [ ] Agente LangGraph: grafo + nodos + tools
-- [ ] 6 tools del agente: search, compare, detect_redundancy, suggest, generate_faq, log
-- [ ] Algoritmo de redundancia: coseno > 0.90 con ChromaDB
-- [ ] Wiring del pipeline RAG al endpoint de upload
-- [ ] Integración Langfuse (trazas automáticas)
-- [ ] Analytics UI: gráficas donut + series temporales
-- [ ] Tests unitarios e integración

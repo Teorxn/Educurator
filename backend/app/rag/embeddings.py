@@ -93,11 +93,15 @@ def chunk_and_embed(
     model = _get_embedding_model()
 
     # ── Cache: una sola consulta por lote (antes: 1 roundtrip por chunk) ──
+    # IMPORTANTE: el cache se limita a chunks del MISMO documento. Sin ese
+    # filtro, contenido idéntico de otro documento (incluso uno ya borrado)
+    # devuelve chroma_ids ajenos; los nodos derivan doc_id del chroma_id y
+    # terminan creando sugerencias para documentos inexistentes (FK violation).
     existing_by_hash: dict[str, str] = {}
     try:
         hashes = list({c["hash"] for c in chunks})
         existing = collection.get(
-            where={"hash": {"$in": hashes}},
+            where={"$and": [{"hash": {"$in": hashes}}, {"doc_id": doc_id}]},
             include=["metadatas"],
         )
         for cid, meta in zip(existing["ids"], existing["metadatas"] or []):

@@ -66,13 +66,37 @@ def _parse_txt(path: Path) -> str:
 
 
 def _ocr_fallback(path: Path) -> str:
-    from pdf2image import convert_from_path
-    import pytesseract
+    """OCR para PDFs escaneados (sin capa de texto).
 
-    images = convert_from_path(path, dpi=300)
+    Requiere poppler (pdf2image) y tesseract. En Docker vienen en la imagen;
+    en desarrollo local (Windows/Mac) se configuran vía POPPLER_PATH y
+    TESSERACT_CMD en .env si no están en el PATH del sistema.
+    """
+    import pytesseract
+    from pdf2image import convert_from_path
+
+    from app.config import settings
+
+    poppler_path = (getattr(settings, "POPPLER_PATH", "") or "").strip() or None
+    tesseract_cmd = (getattr(settings, "TESSERACT_CMD", "") or "").strip()
+    if tesseract_cmd:
+        pytesseract.pytesseract.tesseract_cmd = tesseract_cmd
+
+    logger.info(
+        "OCR: poppler=%s | tesseract=%s",
+        poppler_path or "PATH",
+        tesseract_cmd or "PATH",
+    )
+
+    images = convert_from_path(path, dpi=300, poppler_path=poppler_path)
     text_parts: list[str] = []
     for i, img in enumerate(images):
-        page_text = pytesseract.image_to_string(img, lang="spa+eng")
+        try:
+            page_text = pytesseract.image_to_string(img, lang="spa+eng")
+        except pytesseract.TesseractError as e:
+            # El paquete de idioma 'spa' puede no estar instalado localmente
+            logger.warning("OCR con spa+eng falló (%s) — reintentando solo eng", e)
+            page_text = pytesseract.image_to_string(img, lang="eng")
         text_parts.append(page_text)
         logger.debug("OCR page %d: %d chars", i + 1, len(page_text))
 
