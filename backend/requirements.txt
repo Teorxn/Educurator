@@ -24,7 +24,7 @@ langgraph-checkpoint-sqlite~=3.1.0
 aiosqlite==0.20.0
 langchain-openai~=1.2.0
 langchain-huggingface~=1.2.0
-langchain-google-genai~=2.1.0
+langchain-google-genai~=4.2.6  # >=4.x: thought_signature requerido por Gemini 3.x
 langchain-core~=1.4.0
 chardet==5.2.0
 langfuse~=2.57.0
