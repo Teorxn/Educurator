@@ -330,13 +330,18 @@ class TestChunkAndEmbedNode:
             doc.original_filename = f"test_{i}.txt"
             docs.append(doc)
 
-        # Mock de execute retorna cada documento secuencialmente
-        mock_db_session.execute = AsyncMock(
-            side_effect=[
-                MagicMock(scalar_one_or_none=MagicMock(return_value=doc))
-                for doc in docs
-            ]
-        )
+        # Mock de execute: los SELECT retornan cada documento secuencialmente;
+        # los DELETE (limpieza idempotente de chunks previos) retornan rowcount=0
+        from sqlalchemy.sql.dml import Delete
+
+        doc_iter = iter(docs)
+
+        async def execute_side_effect(stmt, *args, **kwargs):
+            if isinstance(stmt, Delete):
+                return MagicMock(rowcount=0)
+            return MagicMock(scalar_one_or_none=MagicMock(return_value=next(doc_iter)))
+
+        mock_db_session.execute = AsyncMock(side_effect=execute_side_effect)
 
         # Mock parse_document retorna texto simulado
         mock_parse.return_value = (
