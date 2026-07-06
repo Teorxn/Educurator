@@ -1108,6 +1108,121 @@ async def _ainvoke_llm_with_retry(llm, messages):
             await asyncio.sleep(wait)
 
 
+def _llm_response_to_text(content) -> str:
+    """Normaliza response.content del LLM (str o lista de bloques) a string."""
+    if isinstance(content, str):
+        return content
+    parts: list[str] = []
+    for item in content or []:
+        if isinstance(item, str):
+            parts.append(item)
+        elif isinstance(item, dict):
+            parts.append(item.get("text", ""))
+    return " ".join(parts)
+
+
+async def generate_faqs_batch_with_llm(
+    items: list[tuple[str, str]],
+) -> dict[str, tuple[str, str]]:
+    """Genera FAQs para VARIOS chunks en UNA sola llamada al LLM.
+
+    Optimización clave con rate limits estrictos (Gemini free tier a 4 RPM):
+    3 FAQs en llamadas separadas cuestan ~45s de fila; en batch, ~15s.
+
+    Args:
+        items: Lista de (chunk_id, contenido).
+
+    Returns:
+        Mapa chunk_id → (question, answer) con las FAQs que el LLM produjo.
+        Vacío si no hay LLM o la llamada/parseo falla (el caller decide el
+        fallback heurístico por chunk).
+    """
+    if not items:
+        return {}
+
+    from app.agents.graph import get_llm
+
+    llm = get_llm()
+    if llm is None:
+        logger.info("  ℹ️  Sin LLM configurado — FAQs usarán heurística")
+        return {}
+
+    llm_name = getattr(llm, "model", None) or llm.__class__.__name__
+    logger.info(
+        "  🧠 Generando %d FAQs en UNA llamada al LLM (%s)", len(items), llm_name
+    )
+
+    from langchain_core.messages import HumanMessage, SystemMessage
+
+    fragments = "\n\n".join(
+        f"FRAGMENTO {i + 1}:\n{content[:1500]}"
+        for i, (_, content) in enumerate(items)
+    )
+    system_prompt = SystemMessage(
+        content=(
+            "Eres un asistente que genera preguntas frecuentes (FAQ) para "
+            "cursos universitarios. Para CADA fragmento numerado genera UNA "
+            "pregunta relevante y su respuesta, basándote SOLO en ese fragmento.\n\n"
+            "REGLAS:\n"
+            "- No inventes información que no esté en el texto\n"
+            "- Pregunta natural y útil para un estudiante; respuesta concisa "
+            "(máx. 3 oraciones); en español\n"
+            "- Responde ÚNICAMENTE con un array JSON válido, sin texto adicional:\n"
+            '[{"fragmento": 1, "question": "...", "answer": "..."}, ...]'
+        )
+    )
+    human_prompt = HumanMessage(
+        content=f"Genera las FAQs para estos fragmentos:\n\n{fragments}"
+    )
+
+    try:
+        response = await _ainvoke_llm_with_retry(llm, [system_prompt, human_prompt])
+        text = _llm_response_to_text(response.content).strip()
+
+        import re as _re
+
+        json_match = _re.search(r"```(?:json)?\s*(\[.*?\])\s*```", text, _re.DOTALL)
+        raw_json = json_match.group(1) if json_match else None
+        if raw_json is None:
+            arr_match = _re.search(r"\[.*\]", text, _re.DOTALL)
+            raw_json = arr_match.group(0) if arr_match else None
+        if raw_json is None:
+            logger.warning("  ⚠️  Batch FAQ: el LLM no retornó JSON — fallback")
+            return {}
+
+        entries = json.loads(raw_json)
+        results: dict[str, tuple[str, str]] = {}
+        for entry in entries:
+            if not isinstance(entry, dict):
+                continue
+            idx = entry.get("fragmento")
+            question = str(entry.get("question", "")).strip()
+            answer = str(entry.get("answer", "")).strip()
+            if (
+                isinstance(idx, int)
+                and 1 <= idx <= len(items)
+                and question
+                and answer
+            ):
+                chunk_id = items[idx - 1][0]
+                results[chunk_id] = (question, answer)
+
+        logger.info(
+            "  🧠 Batch FAQ: %d/%d FAQs válidas en una llamada",
+            len(results),
+            len(items),
+        )
+        return results
+
+    except Exception as e:
+        logger.warning(
+            "  ⚠️  Batch FAQ falló (%s: %s) — fallback heurístico",
+            e.__class__.__name__,
+            str(e)[:150],
+        )
+        return {}
+
+
 async def _generate_faq_with_llm(
     chunk_content: str,
     topic: str,

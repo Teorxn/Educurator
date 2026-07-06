@@ -533,97 +533,86 @@ async def faq_generation_node(state: "AgentState") -> dict:
         logger.info("  ℹ️  No hay chunks para generar FAQs")
         return {}
 
-    from app.tools.registry import generate_faq_entry as _generate_faq_entry
-
     new_suggestions: list[dict] = []
     errors: list[str] = []
 
-    # Límite de chunks que usarán LLM para generar FAQ (por cuota gratuita Gemini: 5 RPM)
-    # Los chunks más allá de este límite usarán la heurística de extracción de oraciones
+    # Límite de chunks que reciben FAQ del LLM; el resto usa heurística.
+    # OPTIMIZACIÓN: todas las FAQs con LLM se generan en UNA sola llamada
+    # (batch) — con el rate limiter de Gemini a 4 RPM, N llamadas separadas
+    # cuestan ~15s de fila cada una.
     _MAX_LLM_FAQS = 3
-    llm_faq_count = 0
     has_llm = _get_llm_for_node() is not None
+    run_doc_ids = set(state.get("document_ids", []))
+
+    # ── 1. Selección de candidatos (validaciones antes de tocar LLM/DB) ───
+    eligible: list[dict] = []
+    for chunk in chunks:
+        chunk_id = chunk.get("chroma_id", "")
+        chunk_content = chunk.get("text", "")
+
+        # Saltar chunks sin contenido suficiente
+        if not chunk_id or len(chunk_content.strip()) < 20:
+            continue
+
+        # Extraer document_id del chroma_id (formato: "{uuid}_chunk_{n}")
+        doc_id = chunk_id.rsplit("_chunk_", 1)[0] if "_chunk_" in chunk_id else ""
+        if not doc_id:
+            logger.warning(
+                "  ⚠️  No se pudo extraer doc_id de chroma_id: %s", chunk_id
+            )
+            continue
+
+        # Guarda: solo generar FAQs para documentos de ESTA corrida.
+        # Un chroma_id ajeno (p. ej. de un documento borrado que quedó
+        # en el vector store) provocaría un FK violation al persistir.
+        if run_doc_ids and doc_id not in run_doc_ids:
+            logger.warning(
+                "  ⚠️  Chunk %s pertenece a un documento fuera de la corrida "
+                "(%s) — se omite",
+                chunk_id,
+                doc_id,
+            )
+            continue
+
+        eligible.append(
+            {"chunk_id": chunk_id, "content": chunk_content, "doc_id": doc_id}
+        )
 
     logger.info(
-        "  ⚙️  Config FAQ: LLM %s | máx. %d FAQs con LLM, resto heurística | %d chunks",
+        "  ⚙️  Config FAQ: LLM %s | %d chunks elegibles | máx. %d vía LLM "
+        "(en 1 llamada batch), resto heurística",
         "disponible" if has_llm else "NO disponible (solo heurística)",
+        len(eligible),
         _MAX_LLM_FAQS,
-        len(chunks),
     )
 
+    # ── 2. UNA llamada batch al LLM para los primeros N chunks ────────────
+    batch_results: dict[str, tuple[str, str]] = {}
+    if has_llm and eligible:
+        from app.tools.registry import generate_faqs_batch_with_llm
+
+        llm_items = [
+            (e["chunk_id"], e["content"]) for e in eligible[:_MAX_LLM_FAQS]
+        ]
+        batch_results = await generate_faqs_batch_with_llm(llm_items)
+
+    # ── 3. Persistencia (heurística para los chunks sin resultado batch) ──
     async with AsyncSessionLocal() as db:
-        for idx, chunk in enumerate(chunks):
-            chunk_id = chunk.get("chroma_id", "")
-            chunk_content = chunk.get("text", "")
-
-            # Saltar chunks sin contenido suficiente
-            if not chunk_id or len(chunk_content.strip()) < 20:
-                continue
-
-            # Extraer document_id del chroma_id (formato: "{uuid}_chunk_{n}")
-            doc_id = chunk_id.rsplit("_chunk_", 1)[0] if "_chunk_" in chunk_id else ""
-            if not doc_id:
-                logger.warning(
-                    "  ⚠️  No se pudo extraer doc_id de chroma_id: %s", chunk_id
-                )
-                continue
-
-            # Guarda: solo generar FAQs para documentos de ESTA corrida.
-            # Un chroma_id ajeno (p. ej. de un documento borrado que quedó
-            # en el vector store) provocaría un FK violation al persistir.
-            run_doc_ids = set(state.get("document_ids", []))
-            if run_doc_ids and doc_id not in run_doc_ids:
-                logger.warning(
-                    "  ⚠️  Chunk %s pertenece a un documento fuera de la corrida "
-                    "(%s) — se omite",
-                    chunk_id,
-                    doc_id,
-                )
-                continue
+        for item in eligible:
+            chunk_id = item["chunk_id"]
+            chunk_content = item["content"]
+            doc_id = item["doc_id"]
 
             try:
                 question = ""
                 answer = ""
                 generation_method = "heuristic"
-                # Usar LLM solo para los primeros N chunks; el resto usa heurística
-                use_llm = has_llm and llm_faq_count < _MAX_LLM_FAQS
-                if use_llm:
-                    llm_faq_count += 1
-                elif has_llm:
-                    logger.info(
-                        "  🧩 Chunk %d/%d: límite de %d FAQs con LLM alcanzado — heurística",
-                        idx + 1,
-                        len(chunks),
-                        _MAX_LLM_FAQS,
-                    )
 
-                if use_llm:
-                    result_json = await _generate_faq_entry.ainvoke(
-                        {
-                            "chunk_id": chunk_id,
-                            "chunk_content": chunk_content,
-                            "topic": "general",
-                        }
-                    )
-                    payload = json.loads(result_json)
+                if chunk_id in batch_results:
+                    question, answer = batch_results[chunk_id]
+                    generation_method = "llm"
 
-                    if payload.get("status") != "success":
-                        logger.warning(
-                            "  ⚠️  generate_faq_entry falló para chunk %s: %s — "
-                            "cayendo a heurística",
-                            chunk_id,
-                            payload.get("error", "unknown error"),
-                        )
-                        # Fallback a heurística
-                        use_llm = False
-                    else:
-                        faq = payload.get("faq", {})
-                        question = faq.get("question", "")
-                        answer = faq.get("answer", "")
-                        # La tool reporta si internamente usó LLM o su propio fallback
-                        generation_method = faq.get("generation_method", "llm")
-
-                if not use_llm:
+                if generation_method == "heuristic":
                     # Heurística directa (sin LLM) para no exceder cuota
                     import re
 

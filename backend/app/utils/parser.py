@@ -72,6 +72,9 @@ def _ocr_fallback(path: Path) -> str:
     en desarrollo local (Windows/Mac) se configuran vía POPPLER_PATH y
     TESSERACT_CMD en .env si no están en el PATH del sistema.
     """
+    import time
+    from concurrent.futures import ThreadPoolExecutor
+
     import pytesseract
     from pdf2image import convert_from_path
 
@@ -82,24 +85,40 @@ def _ocr_fallback(path: Path) -> str:
     if tesseract_cmd:
         pytesseract.pytesseract.tesseract_cmd = tesseract_cmd
 
+    # DPI 200: suficiente para texto impreso y ~2x más rápido que 300.
+    # Los escaneos de muy baja calidad pueden subirlo vía OCR_DPI en .env.
+    dpi = max(72, getattr(settings, "OCR_DPI", 200))
+    workers = max(1, getattr(settings, "OCR_WORKERS", 4))
+
     logger.info(
-        "OCR: poppler=%s | tesseract=%s",
+        "OCR: dpi=%d, workers=%d | poppler=%s | tesseract=%s",
+        dpi,
+        workers,
         poppler_path or "PATH",
         tesseract_cmd or "PATH",
     )
+    started = time.monotonic()
 
-    images = convert_from_path(path, dpi=300, poppler_path=poppler_path)
-    text_parts: list[str] = []
-    for i, img in enumerate(images):
+    images = convert_from_path(path, dpi=dpi, poppler_path=poppler_path)
+
+    def _ocr_page(img) -> str:
+        # tesseract corre como subproceso → los threads escalan casi lineal
         try:
-            page_text = pytesseract.image_to_string(img, lang="spa+eng")
+            return pytesseract.image_to_string(img, lang="spa+eng")
         except pytesseract.TesseractError as e:
             # El paquete de idioma 'spa' puede no estar instalado localmente
             logger.warning("OCR con spa+eng falló (%s) — reintentando solo eng", e)
-            page_text = pytesseract.image_to_string(img, lang="eng")
-        text_parts.append(page_text)
-        logger.debug("OCR page %d: %d chars", i + 1, len(page_text))
+            return pytesseract.image_to_string(img, lang="eng")
+
+    # Páginas en paralelo, preservando el orden (executor.map lo garantiza)
+    with ThreadPoolExecutor(max_workers=min(workers, max(1, len(images)))) as pool:
+        text_parts = list(pool.map(_ocr_page, images))
 
     result = "\n".join(text_parts).strip()
-    logger.info("OCR fallback completed (%d pages, %d chars)", len(images), len(result))
+    logger.info(
+        "OCR fallback completed (%d pages, %d chars, %.1fs)",
+        len(images),
+        len(result),
+        time.monotonic() - started,
+    )
     return result

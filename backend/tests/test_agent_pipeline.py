@@ -634,34 +634,28 @@ class TestGenerateSuggestionsNode:
 class TestFaqGenerationNode:
     """Generación automática de FAQs desde chunks."""
 
+    @patch("app.agents.nodes._get_llm_for_node")
     @patch("app.agents.nodes.AsyncSessionLocal")
-    @patch("app.tools.registry.generate_faq_entry")
+    @patch("app.tools.registry.generate_faqs_batch_with_llm")
     @pytest.mark.asyncio
     async def test_generates_faqs_from_chunks(
-        self, mock_generate_faq, mock_session_factory, mock_db_session
+        self, mock_batch_faq, mock_session_factory, mock_llm, mock_db_session
     ):
-        """Genera FAQs para chunks con contenido suficiente."""
+        """Genera FAQs para chunks con contenido suficiente (batch: 1 llamada LLM)."""
         mock_session_factory.return_value.__aenter__.return_value = mock_db_session
+        mock_llm.return_value = MagicMock()  # LLM "disponible"
 
-        # Mock generate_faq_entry to return success
-        # LangChain tool ainvoke passes a single dict argument
-        async def faq_side_effect(args: dict):
-            chunk_id = args.get("chunk_id", "")
-            content = args.get("chunk_content", "")
-            question = f"¿Qué es {content.split()[0]}?" if content else "¿Pregunta?"
-            return json.dumps(
-                {
-                    "status": "success",
-                    "faq": {
-                        "question": question,
-                        "answer": f"Respuesta sobre {content[:30]}...",
-                        "source_chunk_id": chunk_id,
-                        "topic": "general",
-                    },
-                }
-            )
+        # Mock del batch: retorna una FAQ por chunk en UNA sola llamada
+        async def batch_side_effect(items):
+            return {
+                chunk_id: (
+                    f"¿Qué es {content.split()[0]}?",
+                    f"Respuesta sobre {content[:30]}...",
+                )
+                for chunk_id, content in items
+            }
 
-        mock_generate_faq.ainvoke = AsyncMock(side_effect=faq_side_effect)
+        mock_batch_faq.side_effect = batch_side_effect
 
         doc_id = str(uuid.uuid4())
         state: AgentState = {
@@ -722,6 +716,9 @@ class TestFaqGenerationNode:
         # Commit por FAQ (aísla fallos de fila) + commit final del nodo
         assert mock_db_session.commit.await_count >= 2
 
+        # La clave de la optimización: UNA sola llamada al LLM para todas las FAQs
+        assert mock_batch_faq.call_count == 1
+
     @patch("app.agents.nodes.AsyncSessionLocal")
     @pytest.mark.asyncio
     async def test_no_chunks_returns_empty(self, mock_session_factory, mock_db_session):
@@ -780,29 +777,24 @@ class TestFaqGenerationNode:
         assert "suggestions" in result
         assert len(result["suggestions"]) == 0
 
+    @patch("app.agents.nodes._get_llm_for_node")
     @patch("app.agents.nodes.AsyncSessionLocal")
-    @patch("app.tools.registry.generate_faq_entry")
+    @patch("app.tools.registry.generate_faqs_batch_with_llm")
     @pytest.mark.asyncio
     async def test_preserves_existing_suggestions(
-        self, mock_generate_faq, mock_session_factory, mock_db_session
+        self, mock_batch_faq, mock_session_factory, mock_llm, mock_db_session
     ):
         """No debe sobrescribir sugerencias existentes en el estado."""
         mock_session_factory.return_value.__aenter__.return_value = mock_db_session
+        mock_llm.return_value = MagicMock()  # LLM "disponible"
 
-        async def faq_side_effect(args: dict):
-            return json.dumps(
-                {
-                    "status": "success",
-                    "faq": {
-                        "question": "¿Pregunta de prueba?",
-                        "answer": "Respuesta de prueba.",
-                        "source_chunk_id": args.get("chunk_id", ""),
-                        "topic": "general",
-                    },
-                }
-            )
+        async def batch_side_effect(items):
+            return {
+                chunk_id: ("¿Pregunta de prueba?", "Respuesta de prueba.")
+                for chunk_id, _ in items
+            }
 
-        mock_generate_faq.ainvoke = AsyncMock(side_effect=faq_side_effect)
+        mock_batch_faq.side_effect = batch_side_effect
 
         doc_id = str(uuid.uuid4())
         existing_suggestion = {

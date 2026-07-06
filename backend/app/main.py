@@ -16,13 +16,37 @@ from app.config import settings
 from app.utils.rate_limit import SlidingWindowRateLimiter
 
 
+async def _preload_embedding_model() -> None:
+    """Precarga el modelo de embeddings en segundo plano al arrancar.
+
+    Sin esto, el PRIMER upload paga los ~10-20s de carga de
+    sentence-transformers dentro de su propia corrida. La precarga corre
+    en un thread y no bloquea el arranque del servidor.
+    """
+    import logging as _logging
+
+    log = _logging.getLogger("app.startup")
+    try:
+        from app.rag.embeddings import get_embedding_model
+
+        await asyncio.to_thread(get_embedding_model)
+        log.info("✅ Modelo de embeddings precargado — el primer upload no espera")
+    except Exception as e:
+        # No es fatal: se cargará perezosamente en el primer uso
+        log.warning("⚠️  No se pudo precargar el modelo de embeddings: %s", e)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    preload_task = asyncio.create_task(_preload_embedding_model())
     try:
         yield
     except asyncio.CancelledError:
         # Shutdown normal del servidor — no propaga el error
         pass
+    finally:
+        if not preload_task.done():
+            preload_task.cancel()
 
 
 app = FastAPI(

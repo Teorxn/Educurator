@@ -31,6 +31,8 @@ class Settings(BaseSettings):
     # OCR para PDFs escaneados (rutas locales; en Docker vienen en PATH)
     POPPLER_PATH: str = ""  # Ej Windows: C:\...\poppler-25.07.0\Library\bin
     TESSERACT_CMD: str = ""  # Ej Windows: C:\Program Files\Tesseract-OCR\tesseract.exe
+    OCR_DPI: int = 200  # 200 basta para texto impreso (~2x más rápido que 300)
+    OCR_WORKERS: int = 4  # Páginas OCR en paralelo (tesseract = subproceso)
 
     # LLM (opcional — si no se configura, el grafo funciona sin agente)
     OPENAI_API_KEY: str = ""  # También puede ir en env var OPENAI_API_KEY
