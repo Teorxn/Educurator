@@ -62,6 +62,7 @@ class Settings(BaseSettings):
 
     # Curation pipeline limits
     MAX_DOCS_PER_CURATION: int = 20  # Máx. documentos por corrida de análisis
+    CURATION_TIMEOUT_SECONDS: int = 900  # OCR 300dpi + Gemini a 4 RPM superan 300s fácil
     FEEDBACK_CONTEXT_SIZE: int = 5  # HU-16: últimos N feedback_patterns inyectados al agente
     EMBED_CONCURRENCY: int = 4  # Máx. documentos parseados/embebidos en paralelo
     MAX_FAQ_PER_DOC: int = 3  # Máx. FAQs (llamadas al LLM) por documento

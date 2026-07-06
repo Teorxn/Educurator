@@ -482,7 +482,7 @@ async def run_curation(
     thread_id: Optional[str] = None,
     use_langfuse: bool = True,
     document_ids: Optional[list[str]] = None,
-    timeout_seconds: int = 300,
+    timeout_seconds: Optional[int] = None,
     triggered_by: Optional[str] = None,
 ) -> dict:
     """Ejecuta el pipeline completo de curación.
@@ -493,13 +493,23 @@ async def run_curation(
         use_langfuse: Si incluir tracing con Langfuse (default True).
         document_ids: Lista opcional de IDs de documentos a procesar.
                       Si es None, load_documents_node los busca automáticamente.
-        timeout_seconds: Timeout máximo para la ejecución del grafo (default 300s).
+        timeout_seconds: Timeout máximo para la ejecución del grafo.
+                         Si es None, usa CURATION_TIMEOUT_SECONDS (env, default 900s
+                         — el OCR de PDFs escaneados y el rate limit de Gemini a
+                         4 RPM hacen que 300s sea insuficiente).
 
     Returns:
         Estado final del grafo después de la ejecución.
     """
+    if timeout_seconds is None:
+        timeout_seconds = getattr(settings, "CURATION_TIMEOUT_SECONDS", 900)
+
     tid = thread_id or f"run-{uuid.uuid4().hex[:12]}"
-    logger.info("🚀 Iniciando corrida de curación: thread_id=%s", tid)
+    logger.info(
+        "🚀 Iniciando corrida de curación: thread_id=%s (timeout: %ds)",
+        tid,
+        timeout_seconds,
+    )
 
     # ── Resumen de configuración de la corrida ────────────────────────────
     if _LLM is None:

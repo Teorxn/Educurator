@@ -1,8 +1,15 @@
 import asyncio
+import logging
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+
+# "Skipping data after last boundary": warning benigno de python-multipart
+# al parsear uploads cuyo body trae bytes residuales tras el boundary final
+# (lo hacen algunos clientes como axios). No indica ningún problema.
+logging.getLogger("python_multipart").setLevel(logging.ERROR)
+logging.getLogger("multipart").setLevel(logging.ERROR)
 
 from app.api import analysis, analytics, auth, docs, reference_docs, suggestions
 from app.config import settings
