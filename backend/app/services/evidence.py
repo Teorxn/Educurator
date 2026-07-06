@@ -68,11 +68,17 @@ async def get_chunks_evidence(
         seen.add(cid)
 
         try:
-            # Intentar buscar por chroma_id (formato "doc_uuid_chunk_N")
+            # Intentar buscar por chroma_id (formato "doc_uuid_chunk_N").
+            # scalars().first() en vez de scalar_one_or_none(): si un
+            # reprocesamiento dejó filas duplicadas con el mismo chroma_id,
+            # cualquiera sirve (contenido idéntico) — antes fallaba con
+            # "Multiple rows were found".
             result = await db.execute(
-                select(DocumentChunk).where(DocumentChunk.chroma_id == cid)
+                select(DocumentChunk)
+                .where(DocumentChunk.chroma_id == cid)
+                .limit(1)
             )
-            chunk = result.scalar_one_or_none()
+            chunk = result.scalars().first()
 
             # Fallback: buscar por UUID si el chroma_id es un UUID válido
             if chunk is None:

@@ -268,7 +268,22 @@ async def _process_single_document(
             )
             logger.info("     Chunks generados: %d", len(chunk_results))
 
-            # 3. Persistir chunks en Postgres
+            # 3. Persistir chunks en Postgres (reprocesamiento idempotente:
+            # si una corrida anterior murió a medias —timeout, crash— sus
+            # chunks ya commiteados se reemplazan en vez de duplicarse)
+            from sqlalchemy import delete as sa_delete
+
+            deleted = await db.execute(
+                sa_delete(DocumentChunk).where(
+                    DocumentChunk.document_id == doc_uuid
+                )
+            )
+            if deleted.rowcount:
+                logger.info(
+                    "     🧹 Reemplazando %d chunks de una corrida anterior",
+                    deleted.rowcount,
+                )
+
             for c in chunk_results:
                 chunk_record = DocumentChunk(
                     document_id=doc_uuid,
