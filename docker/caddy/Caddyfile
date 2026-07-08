@@ -1,0 +1,30 @@
+# ── Reverse proxy de producción (issue #27/#28) ─────────────────────────────
+#
+# TLS automático:
+#   - Con DOMAIN=midominio.com → certificado Let's Encrypt automático
+#   - Sin DOMAIN (default localhost) → certificado local autofirmado de
+#     Caddy, útil para probar el stack de producción en la máquina propia
+#
+# La API solo es alcanzable a través de este proxy: los contenedores no
+# exponen puertos al host (defensa en profundidad, complementa el rate
+# limiting de la aplicación).
+
+{$DOMAIN:localhost} {
+	encode gzip
+
+	# Backend FastAPI
+	handle /api/* {
+		reverse_proxy api:8000
+	}
+	handle /auth/* {
+		reverse_proxy api:8000
+	}
+	handle /health {
+		reverse_proxy api:8000
+	}
+
+	# Frontend estático (nginx con el build de Vite)
+	handle {
+		reverse_proxy frontend:80
+	}
+}

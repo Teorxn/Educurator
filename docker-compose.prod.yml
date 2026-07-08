@@ -1,0 +1,137 @@
+# ── EduCurator — Stack de PRODUCCIÓN (issue #27/#28) ─────────────────────────
+#
+#   docker compose -f docker-compose.prod.yml up -d --build
+#   docker compose -f docker-compose.prod.yml exec api alembic upgrade head
+#   docker compose -f docker-compose.prod.yml exec api python seed.py
+#
+# Diferencias con el compose de desarrollo:
+#   - Caddy como reverse proxy: ÚNICO servicio expuesto (80/443), con TLS
+#     automático (Let's Encrypt si DOMAIN está definido; certificado local
+#     autofirmado si no)
+#   - Frontend compilado (Dockerfile.prod: vite build + nginx), no dev server
+#   - db, chromadb, api y langfuse SIN puertos al host (solo red interna;
+#     langfuse queda en 127.0.0.1:3000 para acceso del operador/túnel SSH)
+#   - restart: always
+#
+# Variables requeridas en .env (usar valores ÚNICOS de producción):
+#   SECRET_KEY, LANGFUSE_SECRET, LANGFUSE_SALT, GEMINI_API_KEY
+#   DOMAIN=midominio.com   (opcional: sin él, TLS local autofirmado)
+# ──────────────────────────────────────────────────────────────────────────────
+
+services:
+  caddy:
+    image: caddy:2-alpine
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      DOMAIN: ${DOMAIN:-localhost}
+    volumes:
+      - ./docker/caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      api:
+        condition: service_healthy
+      frontend:
+        condition: service_started
+    restart: always
+
+  frontend:
+    build:
+      context: ./Frontend
+      dockerfile: Dockerfile.prod
+    # Sin puertos al host: solo Caddy le habla
+    restart: always
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://postgres:postgres@db:5432/educurator
+      CHROMADB_HOST: chromadb
+      CHROMADB_PORT: 8000
+      LANGFUSE_HOST: http://langfuse:3000
+      # CORS: en producción el frontend es misma-origin vía Caddy
+      ALLOWED_ORIGINS: https://${DOMAIN:-localhost},http://localhost
+    volumes:
+      - ./data:/app/data
+    depends_on:
+      db:
+        condition: service_healthy
+      chromadb:
+        condition: service_healthy
+    restart: always
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: educurator
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./docker/postgres/init:/docker-entrypoint-initdb.d
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d educurator"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: always
+
+  chromadb:
+    image: chromadb/chroma:latest
+    volumes:
+      - chroma_data:/chroma/chroma
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request, sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/api/v2/heartbeat').status == 200 else 1)",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    restart: always
+
+  langfuse:
+    image: langfuse/langfuse:2
+    ports:
+      # Solo accesible desde la propia máquina (túnel SSH para el operador)
+      - "127.0.0.1:3000:3000"
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql://postgres:postgres@db:5432/langfuse
+      NEXTAUTH_URL: http://localhost:3000
+      NEXTAUTH_SECRET: ${LANGFUSE_SECRET:-change-me-secret}
+      SALT: ${LANGFUSE_SALT:-change-me-salt}
+      LANGFUSE_INIT_ORG_ID: educurator
+      LANGFUSE_INIT_ORG_NAME: EduCurator
+      LANGFUSE_INIT_PROJECT_ID: educurator
+      LANGFUSE_INIT_PROJECT_NAME: EduCurator AI
+      LANGFUSE_INIT_PROJECT_PUBLIC_KEY: ${LANGFUSE_PUBLIC_KEY:-pk-lf-educurator-dev-0000}
+      LANGFUSE_INIT_PROJECT_SECRET_KEY: ${LANGFUSE_SECRET_KEY:-sk-lf-educurator-dev-0000}
+      LANGFUSE_INIT_USER_EMAIL: ${LANGFUSE_ADMIN_EMAIL:-admin@educurator.dev}
+      LANGFUSE_INIT_USER_NAME: Admin EduCurator
+      LANGFUSE_INIT_USER_PASSWORD: ${LANGFUSE_ADMIN_PASSWORD:-educurator123}
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: always
+
+volumes:
+  postgres_data:
+  chroma_data:
+  caddy_data:
+  caddy_config:

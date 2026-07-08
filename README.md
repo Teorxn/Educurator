@@ -221,26 +221,34 @@ python -m pytest tests/ -q
 
 ---
 
-## Producción — HTTPS y hardening
+## Producción — stack completo con HTTPS
 
-La API no termina TLS por sí misma: en producción va detrás de un reverse proxy
-(nginx, Caddy o Traefik) que maneja HTTPS. Ejemplo mínimo con Caddy:
+Hay un compose de producción listo (`docker-compose.prod.yml`) con Caddy
+como reverse proxy (TLS automático), frontend compilado (Vite build +
+nginx, no dev server) y todos los servicios internos sin puertos al host:
 
+```bash
+# En el .env: SECRET_KEY/LANGFUSE_SECRET/SALT únicos + DOMAIN=midominio.com
+docker compose -f docker-compose.prod.yml up -d --build
+docker compose -f docker-compose.prod.yml exec api alembic upgrade head
+docker compose -f docker-compose.prod.yml exec api python seed.py
 ```
-educurator.midominio.com {
-    reverse_proxy /api/* api:8000
-    reverse_proxy /auth/* api:8000
-    reverse_proxy frontend:5173
-}
-```
+
+- Con `DOMAIN` definido y DNS apuntando al servidor, Caddy obtiene el
+  certificado de Let's Encrypt automáticamente.
+- Sin `DOMAIN`, sirve `https://localhost` con certificado local
+  autofirmado — útil para probar el stack productivo en tu máquina.
+- Langfuse queda en `127.0.0.1:3000` (solo el operador, vía túnel SSH).
 
 Checklist de producción:
+- [x] Reverse proxy con TLS automático (Caddy + Let's Encrypt)
+- [x] Frontend compilado servido como estáticos (nginx multi-stage)
+- [x] Servicios internos sin puertos expuestos al host
 - [x] Rate limiting de login/upload (middleware propio, configurable por env)
 - [x] Rate limiting del LLM (4 RPM Gemini free tier) y de búsqueda web
 - [x] Validación MIME real de archivos (magic bytes, no extensión)
 - [x] JWT con expiración + roles
-- [ ] TLS en reverse proxy (Caddy/nginx + Let's Encrypt)
-- [ ] `SECRET_KEY` y `LANGFUSE_SECRET/SALT` únicos por entorno
+- [ ] `SECRET_KEY` y `LANGFUSE_SECRET/SALT` únicos por entorno (manual)
 - [ ] Con múltiples réplicas: mover rate limiting a Redis o al proxy
 
 ---

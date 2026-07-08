@@ -1,0 +1,25 @@
+# ── Build de producción del frontend ────────────────────────────────────────
+# Etapa 1: compilar el bundle estático (tsc + vite build)
+FROM node:20-alpine AS build
+
+WORKDIR /app
+
+COPY package*.json ./
+RUN npm ci
+
+COPY . .
+
+# En producción el frontend se sirve detrás del reverse proxy (Caddy),
+# misma origin que la API → VITE_API_URL vacío = rutas relativas (/api/...)
+ARG VITE_API_URL=""
+ENV VITE_API_URL=${VITE_API_URL}
+
+RUN npm run build
+
+# Etapa 2: servir los estáticos con nginx (sin node en runtime)
+FROM nginx:alpine
+
+COPY nginx.conf /etc/nginx/conf.d/default.conf
+COPY --from=build /app/dist /usr/share/nginx/html
+
+EXPOSE 80
