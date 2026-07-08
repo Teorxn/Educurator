@@ -1223,6 +1223,132 @@ async def generate_faqs_batch_with_llm(
         return {}
 
 
+async def compare_against_references_with_llm(
+    pairs: list[dict],
+) -> list[dict]:
+    """Compara fragmentos del curso contra fragmentos de documentos de
+    REFERENCIA (lineamientos, buenas prácticas, normativas) en UNA llamada.
+
+    Es el corazón de la feature de documentos de referencia: el corpus de
+    referencia define "cómo deberían ser las cosas" y el LLM evalúa si el
+    contenido curado lo cumple, proponiendo cambios concretos.
+
+    Args:
+        pairs: Lista de dicts con:
+            - curated_chunk_id / curated_content: fragmento del documento del curso
+            - reference_chunk_id / reference_content: fragmento de referencia
+              relevante (recuperado por similitud semántica)
+
+    Returns:
+        Lista de recomendaciones: [{pair_index, recommendation, reasoning,
+        confidence}] — solo para los pares donde el LLM detectó algo que
+        cambiar. Vacía si no hay LLM, no hay hallazgos o la llamada falla.
+    """
+    if not pairs:
+        return []
+
+    from app.agents.graph import get_llm
+
+    llm = get_llm()
+    if llm is None:
+        logger.info(
+            "  ℹ️  Sin LLM — la comparación contra referencias requiere LLM, se omite"
+        )
+        return []
+
+    llm_name = getattr(llm, "model", None) or llm.__class__.__name__
+    logger.info(
+        "  📚 Comparando %d pares curso↔referencia en UNA llamada al LLM (%s)",
+        len(pairs),
+        llm_name,
+    )
+
+    from langchain_core.messages import HumanMessage, SystemMessage
+
+    blocks = []
+    for i, p in enumerate(pairs):
+        blocks.append(
+            f"PAR {i + 1}:\n"
+            f"[CONTENIDO DEL CURSO]\n{p['curated_content'][:1200]}\n"
+            f"[REFERENCIA (buenas prácticas / lineamientos)]\n"
+            f"{p['reference_content'][:1200]}"
+        )
+
+    system_prompt = SystemMessage(
+        content=(
+            "Eres un revisor de contenido educativo. Para CADA par, evalúa si "
+            "el CONTENIDO DEL CURSO cumple lo que establece la REFERENCIA "
+            "(buenas prácticas, lineamientos o normativa institucional).\n\n"
+            "REGLAS:\n"
+            "- Solo reporta un par si hay una desviación REAL y accionable "
+            "respecto a la referencia; si cumple, omítelo\n"
+            "- La recomendación debe ser concreta: qué cambiar y cómo\n"
+            "- Básate EXCLUSIVAMENTE en los textos proporcionados\n"
+            "- confidence: 0.0-1.0 según qué tan clara es la desviación\n"
+            "- Responde ÚNICAMENTE con un array JSON (vacío [] si todo cumple):\n"
+            '[{"par": 1, "recommendation": "...", "reasoning": "...", '
+            '"confidence": 0.8}, ...]'
+        )
+    )
+    human_prompt = HumanMessage(
+        content="Evalúa estos pares:\n\n" + "\n\n".join(blocks)
+    )
+
+    try:
+        response = await _ainvoke_llm_with_retry(llm, [system_prompt, human_prompt])
+        text = _llm_response_to_text(response.content).strip()
+
+        import re as _re
+
+        json_match = _re.search(r"```(?:json)?\s*(\[.*?\])\s*```", text, _re.DOTALL)
+        raw_json = json_match.group(1) if json_match else None
+        if raw_json is None:
+            arr_match = _re.search(r"\[.*\]", text, _re.DOTALL)
+            raw_json = arr_match.group(0) if arr_match else None
+        if raw_json is None:
+            logger.warning("  ⚠️  Comparación referencia: el LLM no retornó JSON")
+            return []
+
+        entries = json.loads(raw_json)
+        results: list[dict] = []
+        for entry in entries:
+            if not isinstance(entry, dict):
+                continue
+            idx = entry.get("par")
+            recommendation = str(entry.get("recommendation", "")).strip()
+            reasoning = str(entry.get("reasoning", "")).strip()
+            try:
+                confidence = float(entry.get("confidence", 0.7))
+            except (TypeError, ValueError):
+                confidence = 0.7
+            confidence = min(1.0, max(0.0, confidence))
+
+            if isinstance(idx, int) and 1 <= idx <= len(pairs) and recommendation:
+                results.append(
+                    {
+                        "pair_index": idx - 1,
+                        "recommendation": recommendation,
+                        "reasoning": reasoning,
+                        "confidence": confidence,
+                    }
+                )
+
+        logger.info(
+            "  📚 Comparación referencia: %d recomendaciones de %d pares",
+            len(results),
+            len(pairs),
+        )
+        return results
+
+    except Exception as e:
+        logger.warning(
+            "  ⚠️  Comparación contra referencias falló (%s: %s)",
+            e.__class__.__name__,
+            str(e)[:150],
+        )
+        return []
+
+
 async def _generate_faq_with_llm(
     chunk_content: str,
     topic: str,

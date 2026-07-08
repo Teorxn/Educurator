@@ -53,6 +53,11 @@ class Settings(BaseSettings):
     REDUNDANCY_THRESHOLD: float = (
         0.90  # Cosine similarity threshold for redundancy detection
     )
+
+    # Comparación contra documentos de referencia (buenas prácticas)
+    REFERENCE_SIMILARITY_THRESHOLD: float = 0.35  # Mín. similitud curso↔referencia
+    REFERENCE_TOP_K: int = 2  # Referencias recuperadas por chunk curado
+    MAX_REFERENCE_PAIRS: int = 6  # Cap de pares enviados al LLM (1 llamada batch)
     MAX_REDUNDANCY_COMPARISONS: int = (
         100_000  # Max comparisons in scan_all_redundancy (prevents O\u00b2 blowup)
     )

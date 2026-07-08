@@ -38,6 +38,7 @@ from app.agents.nodes import (
     inconsistency_detection_node,
     load_documents_node,
     redundancy_detection_node,
+    reference_comparison_node,
     wait_human_approval_node,
     web_search_node,
 )
@@ -190,8 +191,14 @@ _SYSTEM_PROMPT = SystemMessage(
         "1. Revisar el contenido de los documentos y sus chunks\n"
         "2. Detectar información redundante entre documentos\n"
         "3. Identificar contradicciones o conflictos de información\n"
-        "4. Generar preguntas frecuentes (FAQs) basadas en el contenido\n"
-        "5. Sugerir mejoras o actualizaciones cuando sea necesario\n\n"
+        "4. Contrastar el contenido contra los DOCUMENTOS DE REFERENCIA "
+        "(buenas prácticas, lineamientos, normativas): usa "
+        "search_documents con category_filter='reference' para recuperarlos "
+        "y, si el contenido del curso se desvía de lo que establecen, crea "
+        "una sugerencia type='update' citando el chunk de referencia como "
+        "evidencia\n"
+        "5. Generar preguntas frecuentes (FAQs) basadas en el contenido\n"
+        "6. Sugerir mejoras o actualizaciones cuando sea necesario\n\n"
         "REGLAS ESTRICTAS:\n"
         "- NUNCA modifiques contenido oficial directamente\n"
         "- Usa suggest_update para crear sugerencias en estado 'pending'\n"
@@ -199,12 +206,15 @@ _SYSTEM_PROMPT = SystemMessage(
         "- Si no encuentras issues, reporta que el contenido está correcto\n"
         "- Basa tus análisis exclusivamente en el contenido recuperado\n\n"
         "HERRAMIENTAS DISPONIBLES:\n"
-        "- search_documents: busca chunks relevantes en ChromaDB\n"
+        "- search_documents: busca chunks relevantes en ChromaDB "
+        "(category_filter: 'curated' = contenido del curso, "
+        "'reference' = corpus de buenas prácticas/lineamientos)\n"
         "- compare_content: compara dos chunks específicos\n"
         "- detect_conflict: busca contradicciones entre documentos\n"
         "- detect_redundancy: detecta información redundante entre chunks\n"
         "- suggest_update: crea una sugerencia para revisión humana\n"
         "- generate_faq_entry: genera una pregunta frecuente\n"
+        "- search_web: busca información actualizada en la web\n"
         "- log_action: registra acciones para auditoría"
     )
 )
@@ -284,6 +294,7 @@ def _build_graph() -> StateGraph:
     builder.add_node("chunk_and_embed", chunk_and_embed_node)
     builder.add_node("redundancy_detection", redundancy_detection_node)
     builder.add_node("inconsistency_detection", inconsistency_detection_node)
+    builder.add_node("reference_comparison", reference_comparison_node)
     builder.add_node("web_search", web_search_node)
     builder.add_node("faq_generation", faq_generation_node)
     builder.add_node("generate_suggestions", generate_suggestions_node)
@@ -309,6 +320,10 @@ def _build_graph() -> StateGraph:
     # chunk_and_embed → redundancy_detection e inconsistency_detection (paralelo)
     builder.add_edge("chunk_and_embed", "redundancy_detection")
     builder.add_edge("chunk_and_embed", "inconsistency_detection")
+    # Comparación contra el corpus de referencia (buenas prácticas,
+    # lineamientos): corre en paralelo con las otras detecciones
+    builder.add_edge("chunk_and_embed", "reference_comparison")
+    builder.add_edge("reference_comparison", "web_search")
 
     # Ambos confluyen en web_search (nodo opcional)
     next_after_detection = "react_agent" if _react_agent else "faq_generation"

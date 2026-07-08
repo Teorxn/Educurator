@@ -816,6 +816,206 @@ async def web_search_node(state: "AgentState") -> dict:
     return {"web_search_results": all_results}
 
 
+# ── Nodo 4.8: reference_comparison_node ──────────────────────────────────────
+
+
+async def reference_comparison_node(state: "AgentState") -> dict:
+    """Compara el contenido del curso contra el corpus de REFERENCIA.
+
+    Para cada chunk curado de la corrida, recupera los fragmentos de
+    referencia más similares (ChromaDB, metadata category=reference) y,
+    en UNA llamada al LLM, evalúa si el contenido cumple lo que dicen las
+    referencias (buenas prácticas, lineamientos, normativas). Las
+    desviaciones se persisten como sugerencias type=update con el
+    documento de referencia como fuente (la UI muestra el badge
+    '📚 Fuente: Referencia' y la evidencia de ambos fragmentos).
+
+    Requiere LLM; sin él, el nodo se omite (comparar semánticamente
+    curso↔referencia sin modelo produce falsos positivos).
+    """
+    logger.info("=" * 50)
+    logger.info("📚 reference_comparison_node — validando contra referencias")
+    logger.info("=" * 50)
+
+    chunks = state.get("chunks", [])
+    if not chunks:
+        logger.info("  ℹ️  No hay chunks para comparar")
+        return {}
+
+    if _get_llm_for_node() is None:
+        logger.info("  ℹ️  Sin LLM — comparación contra referencias omitida")
+        return {}
+
+    threshold = getattr(settings, "REFERENCE_SIMILARITY_THRESHOLD", 0.35)
+    max_pairs = getattr(settings, "MAX_REFERENCE_PAIRS", 6)
+    top_k = getattr(settings, "REFERENCE_TOP_K", 2)
+    run_doc_ids = set(state.get("document_ids", []))
+
+    from app.rag.embeddings import get_chroma_collection
+
+    # ── 1. Recuperar referencias similares por cada chunk curado ──────────
+    # La similitud se calcula con coseno sobre los embeddings directamente:
+    # la colección de Chroma usa espacio L2 por defecto y sus 'distances'
+    # no son convertibles a similitud coseno con 1-d.
+    def _find_reference_matches() -> list[dict]:
+        from app.rag.redundancy import _cosine_similarity
+
+        collection = get_chroma_collection()
+
+        # Corpus de referencia completo (es pequeño; cap defensivo)
+        ref_data = collection.get(
+            where={"category": "reference"},
+            include=["embeddings", "documents", "metadatas"],
+            limit=500,
+        )
+        ref_ids = ref_data.get("ids") or []
+        if not ref_ids:
+            return []
+        ref_embs = ref_data.get("embeddings")
+        ref_docs = ref_data.get("documents") or []
+        ref_metas = ref_data.get("metadatas") or []
+
+        pairs: list[dict] = []
+        for chunk in chunks[:10]:  # cap: documentos enormes no explotan en pares
+            chunk_id = chunk.get("chroma_id", "")
+            content = chunk.get("text", "")
+            if not chunk_id or len(content.strip()) < 30:
+                continue
+
+            # Reusar el embedding ya almacenado del chunk curado
+            stored = collection.get(ids=[chunk_id], include=["embeddings"])
+            embs = stored.get("embeddings")
+            if embs is None or len(embs) == 0 or embs[0] is None:
+                continue
+            cur_emb = embs[0]
+
+            # Coseno contra cada chunk de referencia; top_k por chunk curado
+            scored: list[tuple[float, int]] = []
+            for j in range(len(ref_ids)):
+                ref_emb = ref_embs[j] if ref_embs is not None else None
+                if ref_emb is None or len(ref_emb) == 0:
+                    continue
+                similarity = _cosine_similarity(cur_emb, ref_emb)
+                if similarity >= threshold:
+                    scored.append((similarity, j))
+            scored.sort(reverse=True)
+
+            for similarity, j in scored[:top_k]:
+                pairs.append(
+                    {
+                        "curated_chunk_id": chunk_id,
+                        "curated_content": content,
+                        "reference_chunk_id": ref_ids[j],
+                        "reference_content": ref_docs[j] if j < len(ref_docs) else "",
+                        "reference_doc_id": (ref_metas[j] or {}).get("doc_id", "")
+                        if j < len(ref_metas)
+                        else "",
+                        "similarity": round(float(similarity), 4),
+                    }
+                )
+
+        # Los pares más relevantes primero; cap global para la llamada LLM
+        pairs.sort(key=lambda p: p["similarity"], reverse=True)
+        return pairs[:max_pairs]
+
+    try:
+        pairs = await asyncio.to_thread(_find_reference_matches)
+    except Exception as e:
+        logger.error("  ❌ Error recuperando referencias: %s", e)
+        return {}
+
+    if not pairs:
+        logger.info(
+            "  ℹ️  Sin corpus de referencia o sin pares relevantes "
+            "(threshold=%.2f) — nada que comparar",
+            threshold,
+        )
+        return {}
+
+    logger.info(
+        "  🔗 %d pares curso↔referencia relevantes (threshold=%.2f)",
+        len(pairs),
+        threshold,
+    )
+
+    # ── 2. UNA llamada al LLM evalúa todos los pares ───────────────────────
+    from app.tools.registry import compare_against_references_with_llm
+
+    recommendations = await compare_against_references_with_llm(pairs)
+    if not recommendations:
+        logger.info("  ✅ El contenido cumple las referencias — sin sugerencias")
+        return {}
+
+    # ── 3. Persistir recomendaciones como sugerencias type=update ─────────
+    new_suggestions: list[dict] = []
+    async with AsyncSessionLocal() as db:
+        for rec in recommendations:
+            pair = pairs[rec["pair_index"]]
+            curated_chunk_id = pair["curated_chunk_id"]
+            doc_id = (
+                curated_chunk_id.rsplit("_chunk_", 1)[0]
+                if "_chunk_" in curated_chunk_id
+                else ""
+            )
+            if not doc_id or (run_doc_ids and doc_id not in run_doc_ids):
+                continue
+
+            try:
+                description = f"Recomendación según referencia: {rec['recommendation']}"
+                if len(description) > 1900:
+                    description = description[:1900] + "…"
+                reasoning = (
+                    f"{rec.get('reasoning', '')}\n\n"
+                    f"[Comparación contra documento de referencia "
+                    f"{pair['reference_doc_id']} | similitud semántica: "
+                    f"{pair['similarity']:.2f} | evidencia: fragmento del curso "
+                    f"{curated_chunk_id} vs referencia {pair['reference_chunk_id']}]"
+                )
+
+                suggestion = Suggestion(
+                    document_id=uuid.UUID(doc_id),
+                    type=SuggestionType.update,
+                    description=description,
+                    # source_doc_id = documento de REFERENCIA → la API deriva
+                    # source_type='reference' y la UI muestra el badge 📚
+                    source_doc_id=pair["reference_doc_id"] or doc_id,
+                    source_chunk_ids=[
+                        curated_chunk_id,
+                        pair["reference_chunk_id"],
+                    ],
+                    confidence_score=rec["confidence"],
+                    reasoning=reasoning,
+                    status=SuggestionStatus.pending,
+                )
+                db.add(suggestion)
+                await db.commit()
+
+                new_suggestions.append(
+                    {
+                        "id": str(suggestion.id),
+                        "document_id": doc_id,
+                        "type": "update",
+                        "description": description,
+                        "confidence_score": rec["confidence"],
+                        "source_type": "reference",
+                    }
+                )
+                logger.info(
+                    "  ✅ Recomendación por referencia (conf %.2f): %s",
+                    rec["confidence"],
+                    rec["recommendation"][:70],
+                )
+            except Exception as e:
+                logger.error("  ❌ Error persistiendo recomendación: %s", e)
+                try:
+                    await db.rollback()
+                except Exception:
+                    pass
+
+    existing = state.get("suggestions", [])
+    return {"suggestions": existing + new_suggestions}
+
+
 # ── Nodo 5: generate_suggestions_node ────────────────────────────────────────
 
 
