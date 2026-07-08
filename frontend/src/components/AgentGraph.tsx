@@ -5,6 +5,7 @@ import { getGraphDiagram } from "../api/analysis";
 
 mermaid.initialize({
   startOnLoad: false,
+  securityLevel: "loose",
   theme: "base",
   themeVariables: {
     primaryColor: "#ede9fe", // violet-100
@@ -18,6 +19,11 @@ mermaid.initialize({
   },
   flowchart: { curve: "basis", htmlLabels: true },
 });
+
+// Contador para ids únicos: React StrictMode monta el efecto dos veces en
+// dev y dos mermaid.render concurrentes con el MISMO id se pisan entre sí
+// (uno borra el DOM temporal del otro → SVG vacío).
+let renderSeq = 0;
 
 /**
  * Renderiza el grafo LangGraph del agente (diagrama Mermaid generado
@@ -39,18 +45,31 @@ export default function AgentGraph() {
         if (cancelled) return;
         setLlm(data.llm);
 
-        const { svg } = await mermaid.render("agent-graph-svg", data.mermaid);
+        renderSeq += 1;
+        const renderId = `agent-graph-${renderSeq}-${Date.now()}`;
+        const { svg } = await mermaid.render(renderId, data.mermaid);
+
         if (cancelled || !containerRef.current) return;
+        if (!svg || !svg.includes("<svg")) {
+          throw new Error("mermaid retornó un SVG vacío");
+        }
         containerRef.current.innerHTML = svg;
 
-        // El SVG debe escalar al ancho disponible
+        // Sizing: mermaid emite el SVG con viewBox pero sin width/height
+        // explícitos — sin esto el navegador puede colapsarlo a altura 0.
         const el = containerRef.current.querySelector("svg");
         if (el) {
-          el.style.maxWidth = "100%";
+          el.removeAttribute("height");
+          el.style.width = "100%";
+          el.style.maxWidth = "900px";
           el.style.height = "auto";
+          el.style.display = "block";
         }
-      } catch {
-        if (!cancelled) setError("No se pudo cargar el diagrama del grafo.");
+      } catch (e) {
+        console.error("Error renderizando el grafo del agente:", e);
+        if (!cancelled) {
+          setError("No se pudo renderizar el diagrama del grafo.");
+        }
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -61,24 +80,6 @@ export default function AgentGraph() {
       cancelled = true;
     };
   }, []);
-
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center h-40 text-gray-400 gap-2">
-        <Loader2 className="w-4 h-4 animate-spin" />
-        <span className="text-sm">Generando diagrama del grafo...</span>
-      </div>
-    );
-  }
-
-  if (error) {
-    return (
-      <div className="flex items-center gap-2 bg-red-50 border border-red-200 text-red-700 text-sm rounded-xl px-4 py-3">
-        <AlertCircle className="w-4 h-4 shrink-0" />
-        {error}
-      </div>
-    );
-  }
 
   return (
     <div className="bg-white rounded-xl border border-gray-200 p-4">
@@ -92,6 +93,21 @@ export default function AgentGraph() {
           </span>
         )}
       </div>
+
+      {loading && (
+        <div className="flex items-center justify-center h-40 text-gray-400 gap-2">
+          <Loader2 className="w-4 h-4 animate-spin" />
+          <span className="text-sm">Generando diagrama del grafo...</span>
+        </div>
+      )}
+
+      {error && (
+        <div className="flex items-center gap-2 bg-red-50 border border-red-200 text-red-700 text-sm rounded-xl px-4 py-3">
+          <AlertCircle className="w-4 h-4 shrink-0" />
+          {error}
+        </div>
+      )}
+
       <div ref={containerRef} className="overflow-x-auto flex justify-center" />
     </div>
   );
