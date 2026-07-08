@@ -227,9 +227,13 @@ _SYSTEM_PROMPT = SystemMessage(
         "- compare_content: compara dos chunks específicos\n"
         "- detect_conflict: busca contradicciones entre documentos\n"
         "- detect_redundancy: detecta información redundante entre chunks\n"
-        "- suggest_update: crea una sugerencia para revisión humana\n"
+        "- suggest_update: crea una sugerencia para revisión humana "
+        "(acepta source_web_url para citar evidencia web)\n"
         "- generate_faq_entry: genera una pregunta frecuente\n"
-        "- search_web: busca información actualizada en la web\n"
+        "- search_web: busca información actualizada en la web. Úsala para "
+        "verificar datos factuales (fechas, normativas, cifras) del contenido; "
+        "si la evidencia web respalda una sugerencia, cita su URL en "
+        "source_web_url\n"
         "- log_action: registra acciones para auditoría"
     )
 )
@@ -250,8 +254,33 @@ else:
     logger.info("ℹ️  ReAct agent deshabilitado — modo solo pipeline RAG")
 
 
+def _format_web_evidence(results: list) -> str:
+    """Formatea los resultados del nodo web_search como contexto del agente.
+
+    Sin esto, los resultados morían en el estado sin que nadie los leyera:
+    el agente ReAct solo ve sus messages, así que la evidencia web debe
+    inyectarse explícitamente como mensaje.
+    """
+    lines = ["EVIDENCIA WEB COMPLEMENTARIA (recuperada automáticamente):"]
+    for i, r in enumerate(results[:3], 1):
+        title = (r.get("title") or "").strip()[:100]
+        url = (r.get("url") or "").strip()
+        snippet = (r.get("snippet") or r.get("content") or "").strip()[:220]
+        lines.append(f"{i}. {title}\n   URL: {url}\n   {snippet}")
+    lines.append(
+        "Si esta evidencia respalda o contradice el contenido del curso, "
+        "cítala pasando la URL en 'source_web_url' de suggest_update. "
+        "La evidencia web COMPLEMENTA a los documentos, nunca los reemplaza: "
+        "toda sugerencia sigue exigiendo source_chunk_ids de los documentos."
+    )
+    return "\n\n".join(lines)
+
+
 async def _safe_react_agent_node(state: AgentState) -> dict:
     """Ejecuta el subgrafo ReAct tolerando fallos del LLM.
+
+    Antes de invocar al agente, inyecta como mensaje la evidencia web
+    recolectada por web_search_node (de lo contrario nadie la consume).
 
     Si el proveedor agota la cuota (429 / ResourceExhausted) o falla por
     cualquier otra razón, el pipeline NO se cae: continúa hacia
@@ -261,6 +290,17 @@ async def _safe_react_agent_node(state: AgentState) -> dict:
     atascados en 'processing'.
     """
     try:
+        web_results = state.get("web_search_results") or []
+        if web_results:
+            evidence_msg = HumanMessage(content=_format_web_evidence(web_results))
+            state = {
+                **state,
+                "messages": list(state.get("messages", [])) + [evidence_msg],
+            }
+            logger.info(
+                "  🌐 Inyectando %d resultados web al contexto del agente",
+                min(len(web_results), 3),
+            )
         return await _react_agent.ainvoke(state)
     except Exception as e:
         logger.warning(

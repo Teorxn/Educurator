@@ -1447,14 +1447,23 @@ class TestAuditTrail:
 class TestWebSearchNode:
     """Prueba el nodo de búsqueda web en el grafo."""
 
+    @patch("app.agents.nodes._build_web_queries")
     @patch("app.agents.nodes.settings")
     @patch("app.tools.registry.search_web")
     @pytest.mark.asyncio
-    async def test_returns_results_from_chunks(self, mock_search_web, mock_settings):
-        """Debe generar consultas desde chunks y retornar resultados."""
+    async def test_returns_results_from_chunks(
+        self, mock_search_web, mock_settings, mock_build_queries
+    ):
+        """Debe ejecutar las consultas generadas y retornar resultados.
+
+        La generación de consultas (_build_web_queries) tiene sus propios
+        tests en tests/unit/test_web_search_queries.py — aquí se mockea
+        para probar el loop de búsqueda del nodo de forma determinista.
+        """
         from app.agents.nodes import web_search_node
 
         mock_settings.WEB_SEARCH_MAX_RESULTS = 3
+        mock_build_queries.return_value = ["consulta de prueba del curso"]
 
         async def fake_search(input_dict):
             query = input_dict.get("query", "")

@@ -17,6 +17,7 @@ Nodos:
 import asyncio
 import json
 import logging
+import re
 import uuid
 from pathlib import Path
 
@@ -732,13 +733,106 @@ async def faq_generation_node(state: "AgentState") -> dict:
 
 # ── Nodo 4.75: web_search_node ────────────────────────────────────────────────
 
+# Líneas que NO sirven como consulta web: encabezados de formatos
+# institucionales, códigos de documento, numeraciones, fechas sueltas
+_WEB_QUERY_NOISE = re.compile(
+    r"^\s*("
+    r"c[oó]digo\s*[:.]|versi[oó]n\s+\d|formato\s|p[aá]gina\s+\d|fecha\s*[:.]|"
+    r"[A-Z]{2,}-[A-Z]{2,}-\d|"  # códigos tipo GDC-FR-15
+    r"\d{1,2}[/-]\d{1,2}[/-]\d{2,4}|"  # fechas
+    r"tabla\s+de\s+contenido|índice"
+    r")",
+    re.IGNORECASE,
+)
+
+
+def _clean_filename_query(filename: str) -> str:
+    """Convierte un nombre de archivo en consulta web ('mi_doc v2.pdf' → 'mi doc')."""
+    stem = re.sub(r"\.[a-z0-9]{2,5}$", "", filename, flags=re.IGNORECASE)
+    stem = re.sub(r"[_\-.]+", " ", stem)
+    # Quitar sufijos de versionado que no aportan a la búsqueda
+    stem = re.sub(
+        r"\b(v\d+|versi[oó]n\s*\d*|final|original|act\w*|copia)\b",
+        "",
+        stem,
+        flags=re.IGNORECASE,
+    )
+    return re.sub(r"\s{2,}", " ", stem).strip()
+
+
+def _pick_content_sentence(chunks: list[dict]) -> str:
+    """Elige la oración más informativa de los primeros chunks como consulta.
+
+    Filtra encabezados de formatos, códigos y numeraciones (el bug clásico:
+    buscar 'Código: GDC-FR-15 Versión 004' en la web no aporta nada).
+    """
+    candidates: list[str] = []
+    for chunk in chunks[:3]:
+        text = chunk.get("text", "") or chunk.get("content", "")
+        for sentence in re.split(r"(?<=[.!?:\n])\s+", text):
+            # Normalizar espacios/saltos de línea internos
+            s = re.sub(r"\s+", " ", sentence).strip()
+            if not (40 <= len(s) <= 140):
+                continue
+            if _WEB_QUERY_NOISE.search(s):
+                continue
+            # Debe ser mayormente texto (no tablas/números sueltos)
+            letters = sum(c.isalpha() or c.isspace() for c in s)
+            if letters / len(s) < 0.75:
+                continue
+            candidates.append(s)
+    if not candidates:
+        return ""
+    # La más larga dentro del rango suele ser la más descriptiva
+    return max(candidates, key=len)[:120]
+
+
+async def _build_web_queries(state: "AgentState") -> list[str]:
+    """Construye hasta 2 consultas web de calidad para la corrida.
+
+    1. El nombre del documento (limpio): suele describir el tema exacto.
+    2. La oración más informativa del contenido (filtrando encabezados).
+    """
+    queries: list[str] = []
+
+    # Consulta 1: nombre(s) de documento de la corrida
+    doc_ids = state.get("document_ids", [])
+    if doc_ids:
+        try:
+            doc_uuids = [uuid.UUID(d) for d in doc_ids[:3]]
+            async with AsyncSessionLocal() as db:
+                rows = (
+                    await db.execute(
+                        select(Document.original_filename).where(
+                            Document.id.in_(doc_uuids)
+                        )
+                    )
+                ).all()
+            for (fname,) in rows:
+                q = _clean_filename_query(fname or "")
+                if len(q) >= 15 and q not in queries:
+                    queries.append(q)
+                if len(queries) >= 1:  # 1 consulta por nombre basta
+                    break
+        except Exception as e:
+            logger.warning("  ⚠️  No se pudieron leer nombres de documentos: %s", e)
+
+    # Consulta 2: oración representativa del contenido
+    sentence = _pick_content_sentence(state.get("chunks", []))
+    if sentence and sentence not in queries:
+        queries.append(sentence)
+
+    return queries[:2]
+
 
 async def web_search_node(state: "AgentState") -> dict:
-    """Ejecuta búsquedas web para validar datos factuales y enriquecer sugerencias.
+    """Busca información web para validar y enriquecer el análisis del agente.
 
-    Analiza los chunks disponibles, genera consultas relevantes y
-    almacena los resultados en web_search_results para que el
-    react_agent los use como evidencia complementaria.
+    Genera hasta 2 consultas de CALIDAD (nombre del documento + oración
+    representativa, filtrando encabezados de formatos) y guarda los
+    mejores resultados en web_search_results. El nodo react_agent los
+    recibe como evidencia complementaria en su contexto y puede citarlos
+    vía source_web_url en suggest_update.
 
     Los resultados web NUNCA reemplazan fuentes documentales;
     se marcan explícitamente con source_type="web".
@@ -752,21 +846,14 @@ async def web_search_node(state: "AgentState") -> dict:
         logger.info("  ℹ️  No hay chunks para generar consultas web")
         return {"web_search_results": []}
 
-    # Generar consultas relevantes desde el contenido de los chunks
-    topics = set()
-    for chunk in chunks[:5]:
-        text = chunk.get("text", "") or chunk.get("content", "")
-        if text and len(text.strip()) > 30:
-            first_bit = text.split(".")[0].strip()
-            if len(first_bit) > 20:
-                topics.add(first_bit[:120])
-
-    queries = list(topics)[:3]
+    queries = await _build_web_queries(state)
     if not queries:
-        logger.info("  ℹ️  No se generaron consultas web del contenido")
+        logger.info("  ℹ️  No se generaron consultas web de calidad — se omite")
         return {"web_search_results": []}
 
     logger.info("  📋 Consultas a ejecutar: %d", len(queries))
+    for q in queries:
+        logger.info("     🔎 '%s'", q[:90])
 
     from app.tools.registry import search_web as search_web_tool
 
@@ -812,8 +899,23 @@ async def web_search_node(state: "AgentState") -> dict:
         except Exception as e:
             logger.error("  ❌ Error en búsqueda '%s': %s", query[:50], e)
 
-    logger.info("  📊 Resultados web recolectados: %d", len(all_results))
-    return {"web_search_results": all_results}
+    # Dedupe por URL y cap: el agente recibirá los primeros como contexto
+    seen_urls: set[str] = set()
+    unique_results: list[dict] = []
+    for r in all_results:
+        url = r.get("url", "")
+        if url and url in seen_urls:
+            continue
+        seen_urls.add(url)
+        unique_results.append(r)
+    unique_results = unique_results[:6]
+
+    logger.info(
+        "  📊 Resultados web recolectados: %d (únicos: %d)",
+        len(all_results),
+        len(unique_results),
+    )
+    return {"web_search_results": unique_results}
 
 
 # ── Nodo 4.8: reference_comparison_node ──────────────────────────────────────
