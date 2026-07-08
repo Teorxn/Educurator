@@ -235,6 +235,37 @@ async def get_analysis_info(
     return get_graph_info()
 
 
+# ── GET /api/analysis/graph ───────────────────────────────────────────────────
+
+
+@router.get("/graph")
+async def get_graph_diagram(
+    current_user: User = Depends(get_current_user),
+):
+    """Retorna el diagrama del grafo LangGraph en formato Mermaid.
+
+    El diagrama se genera desde el grafo COMPILADO (no está dibujado a
+    mano): refleja siempre los nodos y aristas reales, incluyendo las
+    ramas condicionales. El frontend lo renderiza con mermaid.js.
+    """
+    from app.agents.graph import curation_graph, get_graph_info
+
+    try:
+        mermaid = curation_graph.get_graph().draw_mermaid()
+    except Exception as e:
+        logger.error("Error generando diagrama Mermaid: %s", e)
+        raise HTTPException(
+            status_code=500, detail=f"No se pudo generar el diagrama: {e}"
+        )
+
+    info = get_graph_info()
+    return {
+        "mermaid": mermaid,
+        "nodes": info["nodes"],
+        "llm": info["llm"],
+    }
+
+
 # ── GET /api/analysis/status/{thread_id} ──────────────────────────────────────
 
 

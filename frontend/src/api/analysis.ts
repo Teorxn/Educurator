@@ -57,6 +57,16 @@ export const triggerCuration = () =>
 export const getCurationRuns = (limit = 50) =>
   api.get<AgentRunsResponse>("/api/analysis/runs", { params: { limit } });
 
+export interface GraphDiagram {
+  mermaid: string;
+  nodes: string[];
+  llm: string;
+}
+
+/** Diagrama Mermaid del grafo LangGraph (generado del grafo compilado). */
+export const getGraphDiagram = () =>
+  api.get<GraphDiagram>("/api/analysis/graph");
+
 /** Consulta el estado de una corrida por su thread_id. */
 export const getCurationStatus = (threadId: string) =>
   api.get<CurationRun>(`/api/analysis/status/${threadId}`);

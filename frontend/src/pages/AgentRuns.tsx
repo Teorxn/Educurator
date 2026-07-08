@@ -4,11 +4,13 @@ import {
   CheckCircle2,
   Clock,
   ExternalLink,
+  GitBranch,
   Loader2,
   Play,
   RefreshCw,
   XCircle,
 } from "lucide-react";
+import AgentGraph from "../components/AgentGraph";
 import { getCurationRuns, triggerCuration } from "../api/analysis";
 import type { AgentRun } from "../api/analysis";
 
@@ -58,6 +60,7 @@ export default function AgentRuns() {
   const [loading, setLoading] = useState(true);
   const [triggering, setTriggering] = useState(false);
   const [notice, setNotice] = useState("");
+  const [showGraph, setShowGraph] = useState(false);
   const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const fetchRuns = async (isFirstLoad = false) => {
@@ -125,19 +128,34 @@ export default function AgentRuns() {
           {runs.length} ejecuci{runs.length !== 1 ? "ones" : "ón"} registrada
           {runs.length !== 1 ? "s" : ""}
         </p>
-        <button
-          onClick={handleTrigger}
-          disabled={triggering}
-          className="flex items-center gap-2 bg-violet-600 hover:bg-violet-700 disabled:bg-violet-300 text-white text-sm font-medium px-4 py-2 rounded-lg transition-colors"
-        >
-          {triggering ? (
-            <Loader2 className="w-4 h-4 animate-spin" />
-          ) : (
-            <Play className="w-4 h-4" />
-          )}
-          Ejecutar análisis
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => setShowGraph((v) => !v)}
+            className={`flex items-center gap-2 text-sm font-medium px-4 py-2 rounded-lg border transition-colors ${
+              showGraph
+                ? "bg-violet-50 text-violet-700 border-violet-300"
+                : "bg-white text-gray-600 border-gray-200 hover:border-violet-300"
+            }`}
+          >
+            <GitBranch className="w-4 h-4" />
+            {showGraph ? "Ocultar grafo" : "Ver grafo del agente"}
+          </button>
+          <button
+            onClick={handleTrigger}
+            disabled={triggering}
+            className="flex items-center gap-2 bg-violet-600 hover:bg-violet-700 disabled:bg-violet-300 text-white text-sm font-medium px-4 py-2 rounded-lg transition-colors"
+          >
+            {triggering ? (
+              <Loader2 className="w-4 h-4 animate-spin" />
+            ) : (
+              <Play className="w-4 h-4" />
+            )}
+            Ejecutar análisis
+          </button>
+        </div>
       </div>
+
+      {showGraph && <AgentGraph />}
 
       {notice && (
         <div className="text-sm text-violet-700 bg-violet-50 border border-violet-200 rounded-xl px-4 py-3">
