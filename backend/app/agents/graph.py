@@ -52,11 +52,17 @@ logger = logging.getLogger(__name__)
 # ── Langfuse Callback Factory ────────────────────────────────────────────────
 
 
-def _create_langfuse_handler() -> Optional[Any]:
+def _create_langfuse_handler(session_id: Optional[str] = None) -> Optional[Any]:
     """Crea el callback handler de Langfuse si está configurado.
 
     Retorna None si las credenciales no están configuradas,
     permitiendo que el grafo funcione sin tracing.
+
+    Args:
+        session_id: Si se provee (thread_id de la corrida), todas las trazas
+                    de esa corrida quedan agrupadas como una sesión en la UI
+                    de Langfuse — un clic muestra el recorrido completo por
+                    los nodos del grafo.
     """
     pk = settings.LANGFUSE_PUBLIC_KEY.strip()
     sk = settings.LANGFUSE_SECRET_KEY.strip()
@@ -65,14 +71,23 @@ def _create_langfuse_handler() -> Optional[Any]:
         return None
 
     try:
+        # langfuse v2 importa rutas legacy de langchain que ya no existen
+        # en langchain-core 1.x — el shim las provee
+        from app.utils.langfuse_compat import install_legacy_langchain_shims
+
+        install_legacy_langchain_shims()
+
         from langfuse.callback import CallbackHandler  # type: ignore[import-untyped]
 
         handler = CallbackHandler(
             secret_key=sk,
             public_key=pk,
-            host=settings.LANGFUSE_HOST or "https://cloud.langfuse.com",
+            host=(settings.LANGFUSE_HOST or "https://cloud.langfuse.com").rstrip("/"),
+            session_id=session_id,
         )
-        logger.info("✅ Langfuse CallbackHandler configurado")
+        logger.info(
+            "✅ Langfuse CallbackHandler configurado (session=%s)", session_id or "-"
+        )
         return handler
     except ImportError:
         logger.warning("⚠️  langfuse no instalado — se omite tracing")
@@ -558,11 +573,14 @@ async def run_curation(
         "configurable": {"thread_id": tid},
     }
 
-    # Agregar Langfuse callback si está configurado
-    langfuse_handler = _get_langfuse_handler() if use_langfuse else None
+    # Agregar Langfuse callback si está configurado.
+    # Handler POR CORRIDA con session_id=thread_id: en la UI de Langfuse
+    # cada corrida aparece como una sesión con el recorrido completo del
+    # grafo (nodos, tool calls del agente, prompts y latencias).
+    langfuse_handler = _create_langfuse_handler(session_id=tid) if use_langfuse else None
     if langfuse_handler is not None:
         config["callbacks"] = [langfuse_handler]
-        logger.info("  📊 Tracing con Langfuse activo")
+        logger.info("  📊 Tracing con Langfuse activo (sesión %s)", tid)
 
     # HU-16 — Inyectar retroalimentación previa del instructor para que
     # el agente aprenda de aprobaciones/rechazos anteriores.
@@ -609,10 +627,15 @@ async def run_curation(
             timeout=timeout_seconds,
         )
         logger.info("✅ Corrida %s completada exitosamente", tid)
-        # Agregar metadata de tracing al resultado
+        # Agregar metadata de tracing al resultado: URL de la sesión en
+        # Langfuse (agrupa todas las trazas de esta corrida)
         trace_url = None
         if langfuse_handler is not None:
-            trace_url = f"{settings.LANGFUSE_HOST.rstrip('/')}/trace/{tid}"
+            project = getattr(settings, "LANGFUSE_PROJECT_ID", "educurator")
+            trace_url = (
+                f"{settings.LANGFUSE_HOST.rstrip('/')}/project/{project}"
+                f"/sessions/{tid}"
+            )
             result["_trace_url"] = trace_url
         await _record_run_end(
             tid,

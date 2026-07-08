@@ -63,6 +63,18 @@ services:
       NEXTAUTH_URL: http://localhost:3000
       NEXTAUTH_SECRET: ${LANGFUSE_SECRET:-change-me-secret}
       SALT: ${LANGFUSE_SALT:-change-me-salt}
+      # ── Auto-provisión headless (dev): org, proyecto, usuario y API keys ──
+      # Al arrancar, Langfuse crea estos recursos si no existen. Así el
+      # backend puede trazar sin pasar por el signup manual de la UI.
+      LANGFUSE_INIT_ORG_ID: educurator
+      LANGFUSE_INIT_ORG_NAME: EduCurator
+      LANGFUSE_INIT_PROJECT_ID: educurator
+      LANGFUSE_INIT_PROJECT_NAME: EduCurator AI
+      LANGFUSE_INIT_PROJECT_PUBLIC_KEY: ${LANGFUSE_PUBLIC_KEY:-pk-lf-educurator-dev-0000}
+      LANGFUSE_INIT_PROJECT_SECRET_KEY: ${LANGFUSE_SECRET_KEY:-sk-lf-educurator-dev-0000}
+      LANGFUSE_INIT_USER_EMAIL: ${LANGFUSE_ADMIN_EMAIL:-admin@educurator.dev}
+      LANGFUSE_INIT_USER_NAME: Admin EduCurator
+      LANGFUSE_INIT_USER_PASSWORD: ${LANGFUSE_ADMIN_PASSWORD:-educurator123}
     depends_on:
       db:
         condition: service_healthy

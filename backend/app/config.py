@@ -66,6 +66,7 @@ class Settings(BaseSettings):
     LANGFUSE_PUBLIC_KEY: str = ""
     LANGFUSE_SECRET_KEY: str = ""
     LANGFUSE_HOST: str = "https://cloud.langfuse.com"
+    LANGFUSE_PROJECT_ID: str = "educurator"  # Debe coincidir con LANGFUSE_INIT_PROJECT_ID del compose
 
     # Curation pipeline limits
     MAX_DOCS_PER_CURATION: int = 20  # Máx. documentos por corrida de análisis
