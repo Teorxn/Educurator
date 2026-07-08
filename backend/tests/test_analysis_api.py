@@ -305,6 +305,7 @@ def test_langfuse_handler_created_when_configured():
         secret_key="sk-test-456",
         public_key="pk-test-123",
         host="https://cloud.langfuse.com",
+        session_id=None,
     )
 
 
@@ -405,13 +406,29 @@ async def test_get_analysis_info():
 
 
 def test_graph_info_includes_tracing():
-    """get_graph_info debe reportar el estado de Langfuse."""
-    from app.agents.graph import get_graph_info
+    """get_graph_info debe reportar el estado de Langfuse.
 
-    info = get_graph_info()
-    assert "tracing" in info
-    assert "langfuse" in info["tracing"]
-    assert "langfuse_configured" in info["tracing"]
-    # Sin credenciales, debe ser False
-    assert info["tracing"]["langfuse"] is False
-    assert info["tracing"]["langfuse_configured"] is False
+    Se fuerza el escenario 'sin credenciales' (mock de settings + reset del
+    singleton): el entorno de desarrollo ahora SÍ tiene keys configuradas
+    y el resultado dependería de la máquina.
+    """
+    import app.agents.graph as g
+
+    original_singleton = g._langfuse_handler
+    g._langfuse_handler = None
+    try:
+        with patch("app.agents.graph.settings") as mock_settings:
+            mock_settings.LANGFUSE_PUBLIC_KEY = ""
+            mock_settings.LANGFUSE_SECRET_KEY = ""
+            mock_settings.LANGFUSE_HOST = "https://cloud.langfuse.com"
+
+            info = g.get_graph_info()
+
+        assert "tracing" in info
+        assert "langfuse" in info["tracing"]
+        assert "langfuse_configured" in info["tracing"]
+        # Sin credenciales, debe ser False
+        assert info["tracing"]["langfuse"] is False
+        assert info["tracing"]["langfuse_configured"] is False
+    finally:
+        g._langfuse_handler = original_singleton
