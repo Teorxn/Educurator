@@ -54,3 +54,6 @@ NUL
 *.swo
 .DS_Store
 Thumbs.db
+
+# Backups de base de datos (generados por scripts/backup_db.sh)
+backups/

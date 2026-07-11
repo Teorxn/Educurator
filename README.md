@@ -223,6 +223,9 @@ python -m pytest tests/ -q
 
 ## Producción — stack completo con HTTPS
 
+> 📄 Estrategia completa (dónde desplegar, dimensionamiento, por qué no
+> microservicios y ruta de escalado): [docs/despliegue-y-escalado.md](docs/despliegue-y-escalado.md)
+
 Hay un compose de producción listo (`docker-compose.prod.yml`) con Caddy
 como reverse proxy (TLS automático), frontend compilado (Vite build +
 nginx, no dev server) y todos los servicios internos sin puertos al host:
