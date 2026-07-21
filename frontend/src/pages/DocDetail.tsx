@@ -10,10 +10,29 @@ import {
   Layers,
   BookOpen,
   Trash2,
+  Download,
+  Eye,
+  CheckCircle2,
+  AlertCircle,
+  User as UserIcon,
 } from "lucide-react";
 import DocBadge from "../components/DocBadge";
-import { getDoc, getDocContent, getDocHistory, deleteDoc } from "../api/docs";
-import type { Document, DocContent, HistoryRecord } from "../api/docs";
+import {
+  getDoc,
+  getDocContent,
+  getDocHistory,
+  deleteDoc,
+  getDocDetail,
+  downloadDoc,
+  docDownloadUrl,
+  patchDocStatus,
+} from "../api/docs";
+import type {
+  Document,
+  DocContent,
+  HistoryRecord,
+  DocumentDetail,
+} from "../api/docs";
 
 const FILE_EMOJI: Record<string, string> = { pdf: "📄", docx: "📝", txt: "📃" };
 
@@ -50,6 +69,12 @@ export default function DocDetail() {
   const [error, setError] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  // HU-25 — metadatos ampliados y vista previa
+  const [detail, setDetail] = useState<DocumentDetail | null>(null);
+  const [showPreview, setShowPreview] = useState(false);
+  // HU-27 — aprobación del documento
+  const [approving, setApproving] = useState(false);
+  const [approveError, setApproveError] = useState("");
   const [activeTab, setActiveTab] = useState<"content" | "chunks" | "history">(
     "content",
   );
@@ -60,15 +85,17 @@ export default function DocDetail() {
 
     const load = async () => {
       try {
-        const [docRes, contentRes, historyRes] = await Promise.all([
+        const [docRes, contentRes, historyRes, detailRes] = await Promise.all([
           getDoc(id),
           getDocContent(id),
           getDocHistory(id, { limit: 50 }),
+          getDocDetail(id).catch(() => null),
         ]);
         if (cancelled) return;
         setDoc(docRes.data);
         setContent(contentRes.data);
         setHistory(historyRes.data.items);
+        if (detailRes) setDetail(detailRes.data);
       } catch (err: unknown) {
         if (cancelled) return;
         const msg =
@@ -100,6 +127,47 @@ export default function DocDetail() {
       setConfirmDelete(false);
     }
   };
+
+  // HU-25 — descarga del original (byte a byte idéntico al subido)
+  const handleDownload = async () => {
+    if (!id || !doc) return;
+    try {
+      const { data } = await downloadDoc(id);
+      const url = URL.createObjectURL(data);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = content?.original_filename || doc.filename;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch {
+      setApproveError("No se pudo descargar el documento.");
+    }
+  };
+
+  // HU-27 — aprobar solo si todas las sugerencias fueron revisadas
+  const handleApproveDoc = async () => {
+    if (!id) return;
+    setApproving(true);
+    setApproveError("");
+    try {
+      const { data } = await patchDocStatus(id, "approved");
+      setDoc(data);
+      if (detail) setDetail({ ...detail, status: data.status });
+    } catch (e) {
+      const detailMsg = (e as { response?: { data?: { detail?: string } } })
+        ?.response?.data?.detail;
+      setApproveError(
+        detailMsg || "No se pudo aprobar el documento. Intenta de nuevo.",
+      );
+    } finally {
+      setApproving(false);
+    }
+  };
+
+  const pendingSuggestions = detail?.pending_suggestions ?? 0;
+  const canApprove = pendingSuggestions === 0 && doc?.status !== "approved";
 
   if (loading) {
     return (
@@ -168,6 +236,27 @@ export default function DocDetail() {
               )}
           </div>
           <DocBadge status={doc.status} />
+
+          {/* HU-25 — vista previa y descarga del original */}
+          <div className="flex items-center gap-1 shrink-0">
+            {doc.file_type === "pdf" && (
+              <button
+                onClick={() => setShowPreview((v) => !v)}
+                className="p-2 rounded-md text-gray-400 hover:text-violet-600 hover:bg-violet-50 transition-colors"
+                title={showPreview ? "Ocultar vista previa" : "Vista previa"}
+              >
+                <Eye className="w-4 h-4" />
+              </button>
+            )}
+            <button
+              onClick={handleDownload}
+              className="p-2 rounded-md text-gray-400 hover:text-violet-600 hover:bg-violet-50 transition-colors"
+              title="Descargar original"
+            >
+              <Download className="w-4 h-4" />
+            </button>
+          </div>
+
           <div className="shrink-0">
             {confirmDelete ? (
               <div className="flex items-center gap-1.5">
@@ -219,8 +308,81 @@ export default function DocDetail() {
               {totalTokens.toLocaleString()} tokens
             </span>
           </div>
+          {/* HU-25 — uploader */}
+          {detail?.uploader_email && (
+            <div className="flex items-center gap-2 text-gray-500">
+              <UserIcon className="w-3.5 h-3.5 shrink-0" />
+              <span className="truncate">{detail.uploader_email}</span>
+            </div>
+          )}
         </div>
+
+        {/* HU-23 — mensaje de error del pipeline */}
+        {doc.status === "error" && doc.error_message && (
+          <div className="flex items-start gap-2 mt-3 text-sm text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
+            <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+            {doc.error_message}
+          </div>
+        )}
+
+        {/* HU-27 — aprobación del documento */}
+        {detail && doc.status !== "approved" && (
+          <div className="flex items-center justify-between gap-3 mt-4 pt-3 border-t border-gray-100 flex-wrap">
+            <p className="text-xs text-gray-500">
+              {pendingSuggestions > 0 ? (
+                <>
+                  No puedes aprobar este documento:{" "}
+                  <strong className="text-yellow-700">
+                    {pendingSuggestions} sugerencia
+                    {pendingSuggestions !== 1 ? "s" : ""}
+                  </strong>{" "}
+                  {pendingSuggestions !== 1 ? "están" : "está"} pendiente
+                  {pendingSuggestions !== 1 ? "s" : ""} de revisión.{" "}
+                  <button
+                    onClick={() => navigate(`/review?document_id=${doc.id}`)}
+                    className="text-violet-600 hover:text-violet-700 font-medium"
+                  >
+                    Ir a revisión →
+                  </button>
+                </>
+              ) : (
+                <>Todas las sugerencias fueron revisadas.</>
+              )}
+            </p>
+            <button
+              onClick={handleApproveDoc}
+              disabled={!canApprove || approving}
+              title={
+                pendingSuggestions > 0
+                  ? "Revisa todas las sugerencias antes de aprobar"
+                  : "Aprobar documento"
+              }
+              className="flex items-center gap-1.5 text-sm font-medium px-3 py-1.5 rounded-lg bg-green-600 text-white hover:bg-green-700 disabled:bg-gray-200 disabled:text-gray-400 disabled:cursor-not-allowed transition-colors"
+            >
+              <CheckCircle2 className="w-4 h-4" />
+              {approving ? "Aprobando..." : "Aprobar documento"}
+            </button>
+          </div>
+        )}
+
+        {approveError && (
+          <div className="flex items-start gap-2 mt-2 text-sm text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
+            <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+            {approveError}
+          </div>
+        )}
       </div>
+
+      {/* HU-25 — vista previa inline del PDF */}
+      {showPreview && doc.file_type === "pdf" && (
+        <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+          <iframe
+            src={docDownloadUrl(doc.id)}
+            title={`Vista previa de ${doc.filename}`}
+            className="w-full h-[70vh]"
+          />
+        </div>
+      )}
 
       {/* Tabs */}
       <div className="border-b border-gray-200">

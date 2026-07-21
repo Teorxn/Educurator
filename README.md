@@ -109,12 +109,33 @@ docker compose exec api python seed.py
 
 ## Flujo de uso
 
-1. **Login** como instructor o admin.
-2. **Subir documento** (PDF/DOCX/TXT, máx. 50 MB) — el agente se dispara automáticamente en segundo plano.
-3. El agente lee, divide, vectoriza, detecta redundancias/conflictos y propone FAQs — todo como sugerencias `pending` con evidencia (chunks fuente), razonamiento y % de confianza.
-4. **Revisión**: aprobar o rechazar cada sugerencia (el rechazo exige motivo, que alimenta el aprendizaje del agente).
-5. **Ejecuciones del agente**: histórico persistente de corridas (fecha, duración, estado, resumen) + botón para disparar el análisis manualmente.
-6. **Analytics**: KPIs, distribución de sugerencias y tasa de aprobación.
+1. **Registro / Login** — los docentes se registran con su perfil académico
+   (materias, especialidades, cursos), que el agente usa para personalizar
+   sus recomendaciones. Un tutorial guiado se abre la primera vez y queda
+   accesible desde el header.
+2. **Inicio** — panel con análisis recientes, documentos pendientes de
+   revisión, métricas generales y la última ejecución del agente.
+3. **Subir documentos** — hasta 10 archivos a la vez (PDF/DOCX/TXT, máx.
+   50 MB c/u). Cada uno se valida por separado y entra en una cola que el
+   worker procesa secuencialmente. El estado se sigue en vivo:
+   `En cola → Procesando → Analizado` (o `Error`, con mensaje y reintento).
+4. El agente lee, divide, vectoriza, detecta redundancias/conflictos, contrasta
+   con los documentos de referencia y propone FAQs — todo como sugerencias
+   `pending` con evidencia (chunks fuente), razonamiento y % de confianza.
+5. **Revisión** — al terminar el análisis el sistema redirige automáticamente
+   a las sugerencias de ese documento (configurable). Lista paginada
+   (10/25/50) con filtros por estado, tipo y documento; las aprobadas
+   muestran quién y cuándo. Un documento solo puede aprobarse cuando todas
+   sus sugerencias fueron revisadas.
+6. **Preguntar** — chat en lenguaje natural sobre la base de conocimiento:
+   respuestas fundamentadas solo en los documentos, con las fuentes citadas
+   (documento + fragmento) y nivel de confianza.
+7. **Ejecuciones del agente** — histórico persistente de corridas + diagrama
+   del grafo LangGraph + botón para disparar el análisis manualmente.
+8. **Analytics** — KPIs, distribución de sugerencias, tasa de aprobación y
+   consumo de IA (tokens y costo estimado por operación y modelo).
+9. **Administración** (admin) — gestión de usuarios, asignación de roles con
+   confirmación y auditoría, y CRUD de roles personalizados.
 
 ---
 
@@ -122,9 +143,16 @@ docker compose exec api python seed.py
 
 ```
 POST  /auth/login                          → JWT (rate limit: 5/min por IP)
+POST  /auth/register                       → registro de docente + perfil académico
+GET   /api/users/me · PATCH /api/users/me  → perfil propio (editable)
 
 GET   /api/docs                            → lista (filtros: status, category)
 POST  /api/docs/upload                     → subir + auto-curación (rate limit: 20/min)
+POST  /api/docs/upload-batch               → hasta 10 documentos por carga
+GET   /api/docs/status/all                 → estados para polling (all_final)
+POST  /api/docs/{id}/retry                 → reencolar tras un error
+GET   /api/docs/{id}/download              → descarga del original
+GET   /api/docs/{id}/detail                → metadatos + conteos
 GET   /api/docs/{id}                       → detalle
 GET   /api/docs/{id}/history               → audit trail inmutable
 DELETE /api/docs/{id}                      → eliminar documento
@@ -141,6 +169,11 @@ GET   /api/analysis/info                   → LLM, tools y tracing configurados
 
 GET   /api/reference-docs                  → corpus de referencia del agente
 GET   /api/analytics                       → KPIs y tasa de aprobación
+GET   /api/analytics/dashboard             → panel de inicio (agregado)
+GET   /api/analytics/tokens                → consumo de tokens y costo estimado
+POST  /api/chat                            → preguntas en lenguaje natural (RAG)
+GET   /api/roles · POST/PATCH/DELETE       → administración de roles (admin)
+GET   /api/users/role-audit                → auditoría de cambios de rol (admin)
 GET   /api/users · POST /api/users · PATCH /api/users/{id}/role   (admin)
 GET   /health
 ```
@@ -180,6 +213,13 @@ LLM_MAX_CONCURRENCY=2
 LLM_MAX_RETRIES=4                      # backoff exponencial ante 429
 FEEDBACK_CONTEXT_SIZE=5                # patrones de feedback inyectados al agente
 REDUNDANCY_THRESHOLD=0.90
+MAX_BATCH_UPLOAD=10                    # documentos por carga múltiple
+
+# Chat RAG y costos de IA
+CHAT_TOP_K=5
+CHAT_MIN_SIMILARITY=0.25
+LLM_COST_PER_1K_INPUT_TOKENS=0.0001    # tarifa del modelo configurado
+LLM_COST_PER_1K_OUTPUT_TOKENS=0.0004
 
 # Rate limiting de la API
 RATE_LIMIT_ENABLED=true
@@ -205,6 +245,8 @@ LANGFUSE_HOST=http://localhost:3000
 | `document_history` | Audit trail inmutable (solo INSERT) |
 | `feedback_patterns` | Feedback del instructor → aprendizaje del agente (HU-16) |
 | `agent_runs` | Histórico persistente de ejecuciones del agente (HU-19) |
+| `roles` | Roles personalizados del sistema (HU-30) |
+| `token_usage` | Consumo de tokens y costo por llamada al LLM (HU-32) |
 
 ---
 

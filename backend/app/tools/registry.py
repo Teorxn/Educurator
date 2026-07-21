@@ -1121,6 +1121,22 @@ def _llm_response_to_text(content) -> str:
     return " ".join(parts)
 
 
+async def _track_tokens(response, operation: str, llm, prompt_text: str = "") -> None:
+    """HU-32 — Registra el consumo de tokens de una llamada al LLM."""
+    try:
+        from app.services.tokens import track_llm_call
+
+        model_name = getattr(llm, "model", None) or llm.__class__.__name__
+        await track_llm_call(
+            response,
+            operation=operation,
+            model=str(model_name),
+            prompt_text=prompt_text,
+        )
+    except Exception as e:
+        logger.debug("No se pudo registrar consumo de tokens: %s", e)
+
+
 async def generate_faqs_batch_with_llm(
     items: list[tuple[str, str]],
 ) -> dict[str, tuple[str, str]]:
@@ -1177,6 +1193,10 @@ async def generate_faqs_batch_with_llm(
 
     try:
         response = await _ainvoke_llm_with_retry(llm, [system_prompt, human_prompt])
+        await _track_tokens(
+            response, "faq_generation", llm,
+            f"{system_prompt.content} {human_prompt.content}",
+        )
         text = _llm_response_to_text(response.content).strip()
 
         import re as _re
@@ -1296,6 +1316,10 @@ async def compare_against_references_with_llm(
 
     try:
         response = await _ainvoke_llm_with_retry(llm, [system_prompt, human_prompt])
+        await _track_tokens(
+            response, "reference_comparison", llm,
+            f"{system_prompt.content} {human_prompt.content}",
+        )
         text = _llm_response_to_text(response.content).strip()
 
         import re as _re
@@ -1392,6 +1416,10 @@ async def _generate_faq_with_llm(
 
     try:
         response = await _ainvoke_llm_with_retry(llm, [system_prompt, human_prompt])
+        await _track_tokens(
+            response, "faq_single", llm,
+            f"{system_prompt.content} {human_prompt.content}",
+        )
         if isinstance(response.content, str):
             text = response.content.strip()
         else:

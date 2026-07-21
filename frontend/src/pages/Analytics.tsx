@@ -11,6 +11,7 @@ import {
   RefreshCw,
 } from "lucide-react";
 import { getAnalytics, type AnalyticsData } from "../api/suggestions";
+import TokenUsagePanel from "../components/TokenUsagePanel";
 
 function StatCard({
   icon: Icon,
@@ -287,6 +288,9 @@ export default function Analytics() {
           </div>
         </div>
       </div>
+      {/* HU-32 — consumo de tokens y costo estimado */}
+      <TokenUsagePanel />
+
     </div>
   );
 }

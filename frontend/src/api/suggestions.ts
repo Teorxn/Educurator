@@ -44,6 +44,9 @@ export interface Suggestion {
   source_type: string | null;
   review_reason: string | null;
   reviewed_by: string | null;
+  /** HU-26 — identidad legible del revisor */
+  reviewed_by_email?: string | null;
+  reviewed_by_name?: string | null;
   created_at: string;
   reviewed_at: string | null;
 }

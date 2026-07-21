@@ -1,6 +1,6 @@
 import { useState } from "react";
 import type { FormEvent } from "react";
-import { useNavigate, Navigate } from "react-router-dom";
+import { useNavigate, Navigate, Link } from "react-router-dom";
 import { Loader2, AlertCircle } from "lucide-react";
 import { login } from "../api/docs";
 
@@ -12,7 +12,7 @@ export default function Login() {
   const [loading, setLoading] = useState(false);
 
   if (localStorage.getItem("access_token"))
-    return <Navigate to="/docs" replace />;
+    return <Navigate to="/dashboard" replace />;
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
@@ -21,7 +21,7 @@ export default function Login() {
     try {
       const { data } = await login(email, password);
       localStorage.setItem("access_token", data.access_token);
-      navigate("/docs");
+      navigate("/dashboard");
     } catch {
       setError("Credenciales incorrectas. Verifica tu correo y contraseña.");
     } finally {
@@ -101,6 +101,17 @@ export default function Login() {
               {loading ? "Iniciando sesión..." : "Entrar"}
             </button>
           </form>
+
+          {/* HU-29 — acceso al registro de docentes */}
+          <p className="text-sm text-gray-500 text-center mt-5">
+            ¿No tienes cuenta?{" "}
+            <Link
+              to="/register"
+              className="text-violet-600 hover:text-violet-700 font-medium"
+            >
+              Regístrate como docente
+            </Link>
+          </p>
         </div>
 
         <p className="text-center text-xs text-slate-500 mt-6">

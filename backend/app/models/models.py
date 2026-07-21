@@ -19,8 +19,13 @@ class UserRole(str, enum.Enum):
 
 
 class DocumentStatus(str, enum.Enum):
+    # HU-23 — estados del procesamiento visibles para el docente
+    queued = "queued"  # recibido, esperando en la cola
+    processing = "processing"  # pipeline RAG en ejecución
+    analyzed = "analyzed"  # sugerencias generadas, listo para revisión
+    error = "error"  # fallo en el pipeline (ver error_message)
+    # Estados del ciclo de revisión humana
     needs_review = "needs_review"
-    processing = "processing"
     approved = "approved"
     rejected = "rejected"
     archived = "archived"
@@ -57,6 +62,13 @@ class User(Base):
         String(255), unique=True, nullable=False, index=True
     )
     hashed_password: Mapped[str] = mapped_column(String(255), nullable=False)
+    # HU-29 — perfil académico del docente (personaliza al agente).
+    # Todos nullable: los usuarios seed existentes no los tienen.
+    full_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    profession: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    subjects: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    specialties: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    courses_taught: Mapped[list | None] = mapped_column(JSON, nullable=True)
     role: Mapped[UserRole] = mapped_column(
         SAEnum(UserRole), default=UserRole.instructor, nullable=False
     )
@@ -105,6 +117,8 @@ class Document(Base):
     updated_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), onupdate=func.now(), nullable=True
     )
+    # HU-23 — mensaje descriptivo cuando status == error
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     uploader: Mapped["User | None"] = relationship("User", back_populates="documents")
     suggestions: Mapped[list["Suggestion"]] = relationship(
@@ -285,3 +299,64 @@ class AgentRun(Base):
     summary: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
     trace_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
+# ── HU-30: Roles personalizados del sistema ──────────────────────────────────
+
+
+class Role(Base):
+    """Rol personalizado creado por un administrador.
+
+    Los roles base ('admin', 'instructor') viven en el enum UserRole y son
+    inmutables; esta tabla permite definir roles adicionales con permisos
+    declarativos sin tocar el enum.
+    """
+
+    __tablename__ = "roles"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    name: Mapped[str] = mapped_column(
+        String(50), unique=True, nullable=False, index=True
+    )
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    permissions: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    is_system: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+
+# ── HU-32: Consumo de tokens del LLM ─────────────────────────────────────────
+
+
+class TokenUsage(Base):
+    """Registro de consumo de tokens por llamada al LLM.
+
+    Alimenta GET /api/analytics/tokens: permite desglosar consumo y costo
+    estimado por operación (faq, reference_comparison, chat, ...) y por
+    modelo, sin depender de que Langfuse esté configurado.
+    """
+
+    __tablename__ = "token_usage"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    operation: Mapped[str] = mapped_column(String(50), nullable=False, index=True)
+    model: Mapped[str] = mapped_column(String(100), nullable=False, index=True)
+    input_tokens: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    output_tokens: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    total_tokens: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    cost_usd: Mapped[float] = mapped_column(Float, default=0.0, nullable=False)
+    thread_id: Mapped[str | None] = mapped_column(String(100), nullable=True, index=True)
+    document_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("documents.id", ondelete="SET NULL"), nullable=True
+    )
+    user_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id"), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), index=True
+    )

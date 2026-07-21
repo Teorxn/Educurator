@@ -329,8 +329,9 @@ class TestFullCurationPipeline:
             f"se persistieron {len(add_calls)}"
         )
 
-        # Verificar que se hizo flush
-        mock_db_session.flush.assert_awaited()
+        # Los chunks se confirman con commit por documento (la sesión es
+        # propia de cada tarea paralela, no compartida)
+        mock_db_session.commit.assert_awaited()
 
     # ------------------------------------------------------------------
     #  Nodo 3: redundancy_detection_node

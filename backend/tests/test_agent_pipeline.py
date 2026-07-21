@@ -1102,7 +1102,18 @@ class TestDocumentStateTransitions:
 
     def test_valid_status_enum_values(self):
         """Deben existir todos los estados definidos en el enum."""
-        expected = {"needs_review", "processing", "approved", "rejected", "archived"}
+        expected = {
+            # Ciclo de procesamiento (HU-23)
+            "queued",
+            "processing",
+            "analyzed",
+            "error",
+            # Ciclo de revisión humana
+            "needs_review",
+            "approved",
+            "rejected",
+            "archived",
+        }
         actual = {s.value for s in DocumentStatus}
         assert actual == expected
 

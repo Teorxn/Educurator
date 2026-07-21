@@ -6,16 +6,22 @@ import {
   BarChart3,
   BookOpen,
   Activity,
+  LayoutDashboard,
+  MessageSquare,
+  Shield,
   X,
 } from "lucide-react";
 
 const NAV = [
+  { to: "/dashboard", icon: LayoutDashboard, label: "Inicio" },
   { to: "/upload", icon: Upload, label: "Subir documento" },
   { to: "/docs", icon: FileText, label: "Documentos" },
   { to: "/reference-docs", icon: BookOpen, label: "Documentos de referencia" },
   { to: "/review", icon: CheckSquare, label: "Revisión" },
+  { to: "/chat", icon: MessageSquare, label: "Preguntar" },
   { to: "/agent-runs", icon: Activity, label: "Ejecuciones del agente" },
   { to: "/analytics", icon: BarChart3, label: "Analytics" },
+  { to: "/admin/users", icon: Shield, label: "Administración" },
 ];
 
 interface SidebarProps {

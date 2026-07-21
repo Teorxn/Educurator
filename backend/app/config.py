@@ -27,6 +27,7 @@ class Settings(BaseSettings):
     UPLOAD_DIR: str = "data/uploads"
     REFERENCE_DOCS_DIR: str = "data/references"
     MAX_FILE_SIZE: int = 52_428_800  # 50 MB
+    MAX_BATCH_UPLOAD: int = 10  # HU-22: máx. documentos por carga múltiple
 
     # OCR para PDFs escaneados (rutas locales; en Docker vienen en PATH)
     POPPLER_PATH: str = ""  # Ej Windows: C:\...\poppler-25.07.0\Library\bin
@@ -61,6 +62,15 @@ class Settings(BaseSettings):
     MAX_REDUNDANCY_COMPARISONS: int = (
         100_000  # Max comparisons in scan_all_redundancy (prevents O\u00b2 blowup)
     )
+
+    # HU-32 — Costo estimado del LLM (USD por 1.000 tokens).
+    # Defaults: tarifas de gemini-2.5-flash-lite. Ajustar según el modelo.
+    LLM_COST_PER_1K_INPUT_TOKENS: float = 0.0001
+    LLM_COST_PER_1K_OUTPUT_TOKENS: float = 0.0004
+
+    # HU-31 — Chat RAG sobre la base de conocimiento
+    CHAT_TOP_K: int = 5  # Chunks recuperados por pregunta
+    CHAT_MIN_SIMILARITY: float = 0.25  # Umbral para considerar contexto relevante
 
     # Langfuse — tracing y observabilidad
     LANGFUSE_PUBLIC_KEY: str = ""

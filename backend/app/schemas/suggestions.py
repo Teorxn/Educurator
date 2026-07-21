@@ -30,6 +30,9 @@ class SuggestionResponse(BaseModel):
     source_type: str | None = None
     review_reason: str | None
     reviewed_by: uuid.UUID | None
+    # HU-26 — identidad legible de quien revisó la sugerencia
+    reviewed_by_email: str | None = None
+    reviewed_by_name: str | None = None
     reviewed_at: datetime | None
     created_at: datetime
     document_name: str | None = None

@@ -78,6 +78,19 @@ async def list_suggestions(
         .all()
     )
 
+    # HU-26 — resolver los revisores de una sola vez (evita N+1 consultas)
+    reviewer_ids = {s.reviewed_by for s in items if s.reviewed_by}
+    reviewers: dict = {}
+    if reviewer_ids:
+        rows = (
+            await db.execute(
+                select(User.id, User.email, User.full_name).where(
+                    User.id.in_(reviewer_ids)
+                )
+            )
+        ).all()
+        reviewers = {r[0]: (r[1], r[2]) for r in rows}
+
     result = []
     for s in items:
         doc = (
@@ -85,6 +98,12 @@ async def list_suggestions(
         ).scalar_one_or_none()
         resp = SuggestionResponse.model_validate(s)
         resp.document_name = doc.filename if doc else None
+
+        # HU-26 — mostrar quién aprobó/rechazó, no solo su UUID
+        if s.reviewed_by and s.reviewed_by in reviewers:
+            email, full_name = reviewers[s.reviewed_by]
+            resp.reviewed_by_email = email
+            resp.reviewed_by_name = full_name
 
         # #61 — Determinar source_type (curated/reference) según el documento origen
         if s.source_doc_id:

@@ -11,7 +11,17 @@ from fastapi.middleware.cors import CORSMiddleware
 logging.getLogger("python_multipart").setLevel(logging.ERROR)
 logging.getLogger("multipart").setLevel(logging.ERROR)
 
-from app.api import analysis, analytics, auth, docs, reference_docs, suggestions
+from app.api import (
+    analysis,
+    analytics,
+    auth,
+    chat,
+    dashboard,
+    docs,
+    reference_docs,
+    suggestions,
+    users,
+)
 from app.config import settings
 from app.utils.rate_limit import SlidingWindowRateLimiter
 
@@ -39,12 +49,18 @@ async def _preload_embedding_model() -> None:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     preload_task = asyncio.create_task(_preload_embedding_model())
+
+    # HU-22/23 — worker que procesa la cola de curación secuencialmente
+    from app.services.curation_queue import start_worker, stop_worker
+
+    start_worker()
     try:
         yield
     except asyncio.CancelledError:
         # Shutdown normal del servidor — no propaga el error
         pass
     finally:
+        stop_worker()
         if not preload_task.done():
             preload_task.cancel()
 
@@ -75,6 +91,9 @@ app.include_router(docs.router)
 app.include_router(suggestions.router)
 app.include_router(analytics.router)
 app.include_router(reference_docs.router)
+app.include_router(users.router)
+app.include_router(chat.router)
+app.include_router(dashboard.router)
 
 
 # ── Health check ────────────────────────────────────────────────────────────

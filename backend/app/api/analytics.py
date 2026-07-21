@@ -102,6 +102,9 @@ class CreateUserRequest(BaseModel):
 class UserResponse(BaseModel):
     id: uuid.UUID
     email: str
+    # HU-29/HU-30: la tabla de administración muestra el nombre del docente
+    full_name: str | None = None
+    profession: str | None = None
     role: UserRole
     is_active: bool
 
@@ -142,30 +145,6 @@ async def create_user(
     return user
 
 
-@router.patch("/api/users/{user_id}/role", response_model=UserResponse)
-async def update_user_role(
-    user_id: uuid.UUID,
-    body: CreateUserRequest,
-    db: AsyncSession = Depends(get_db),
-    current_admin: User = Depends(require_role(UserRole.admin)),
-):
-    user = (
-        await db.execute(select(User).where(User.id == user_id))
-    ).scalar_one_or_none()
-    if not user:
-        raise HTTPException(status_code=404, detail="User not found")
-
-    old_role = user.role
-    user.role = body.role
-    await db.commit()
-    await db.refresh(user)
-
-    # Audit trail for role change
-    history = DocumentHistory(
-        doc_id=user_id,  # reusing doc_id as generic entity_id — ok for MVP
-        action=f"role_changed:{old_role.value}→{body.role.value}",
-        performed_by=current_admin.id,
-    )
-    db.add(history)
-    await db.commit()
-    return user
+# NOTA: PATCH /api/users/{id}/role vive ahora en app/api/users.py (HU-30),
+# con auditoría completa (rol previo/nuevo, quién y cuándo) y la regla de
+# que un admin no puede cambiar su propio rol.

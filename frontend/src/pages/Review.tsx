@@ -94,9 +94,19 @@ export default function Review() {
 
   const statusFilter = searchParams.get("status") ?? "pending";
   const typeFilter = searchParams.get("type") ?? "";
-  const docFilter = searchParams.get("doc_id") ?? "";
+  // HU-24: la redirección automática llega con ?document_id=…; se acepta
+  // también ?doc_id= por compatibilidad con enlaces previos.
+  const docFilter =
+    searchParams.get("document_id") ?? searchParams.get("doc_id") ?? "";
+  // HU-28: paginación
+  const page = Math.max(1, Number(searchParams.get("page") ?? "1") || 1);
+  const pageSize = Math.max(
+    1,
+    Number(searchParams.get("limit") ?? "25") || 25,
+  );
 
   const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
+  const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
   const [documents, setDocuments] = useState<Document[]>([]);
   const [rejectModal, setRejectModal] = useState<{ id: string; open: boolean }>(
@@ -133,12 +143,18 @@ export default function Review() {
     const load = async () => {
       setLoading(true);
       try {
-        const params: Record<string, string> = {};
+        const params: Record<string, string | number> = {
+          page,
+          limit: pageSize,
+        };
         if (statusFilter) params.status = statusFilter;
         if (typeFilter) params.type = typeFilter;
         if (docFilter) params.document_id = docFilter;
         const { data } = await getSuggestions(params);
-        if (!cancelled) setSuggestions(data.items);
+        if (!cancelled) {
+          setSuggestions(data.items);
+          setTotal(data.total);
+        }
       } catch {
         // silent
       } finally {
@@ -150,7 +166,7 @@ export default function Review() {
     return () => {
       cancelled = true;
     };
-  }, [statusFilter, typeFilter, docFilter]);
+  }, [statusFilter, typeFilter, docFilter, page, pageSize]);
 
   // ── Update URL helpers ──────────────────────────────────────────────────
   const setFilter = (key: string, value: string) => {
@@ -161,8 +177,48 @@ export default function Review() {
       } else {
         next.delete(key);
       }
+      // Cambiar un filtro reinicia la paginación (HU-28)
+      if (key !== "page") next.delete("page");
       return next;
     });
+  };
+
+  // ── HU-28: paginación ───────────────────────────────────────────────────
+  const totalPages = Math.max(1, Math.ceil(total / pageSize));
+  const rangeStart = total === 0 ? 0 : (page - 1) * pageSize + 1;
+  const rangeEnd = Math.min(page * pageSize, total);
+
+  const goToPage = (p: number) => {
+    const target = Math.min(Math.max(1, p), totalPages);
+    setSearchParams((prev) => {
+      const next = new URLSearchParams(prev);
+      next.set("page", String(target));
+      return next;
+    });
+  };
+
+  const setPageSize = (size: number) => {
+    setSearchParams((prev) => {
+      const next = new URLSearchParams(prev);
+      next.set("limit", String(size));
+      next.delete("page"); // volver a la primera página
+      return next;
+    });
+  };
+
+  /** Números de página a mostrar, con elipsis cuando hay muchas. */
+  const pageNumbers = (): (number | "…")[] => {
+    if (totalPages <= 7) {
+      return Array.from({ length: totalPages }, (_, i) => i + 1);
+    }
+    const items: (number | "…")[] = [1];
+    const from = Math.max(2, page - 1);
+    const to = Math.min(totalPages - 1, page + 1);
+    if (from > 2) items.push("…");
+    for (let i = from; i <= to; i++) items.push(i);
+    if (to < totalPages - 1) items.push("…");
+    items.push(totalPages);
+    return items;
   };
 
   // ── Actions ─────────────────────────────────────────────────────────────
@@ -286,13 +342,19 @@ export default function Review() {
           </select>
         </div>
 
-        {/* Count */}
+        {/* Count — HU-28: rango visible sobre el total */}
         <p className="text-sm text-gray-500 ml-auto">
-          {suggestions.length} sugerencia
-          {suggestions.length !== 1 ? "s" : ""}
+          {total > 0 ? (
+            <>
+              Mostrando {rangeStart}–{rangeEnd} de {total} sugerencia
+              {total !== 1 ? "s" : ""}
+            </>
+          ) : (
+            "0 sugerencias"
+          )}
           {pendingCount > 0 && (
             <span className="text-yellow-600 ml-1">
-              ({pendingCount} pendientes)
+              ({pendingCount} pendientes en esta página)
             </span>
           )}
         </p>
@@ -525,17 +587,31 @@ export default function Review() {
                       )}
                     </div>
                   )}
+                  {/* HU-26 — quién revisó y cuándo */}
                   {s.status !== "pending" && (
-                    <div className="shrink-0">
+                    <div className="shrink-0 text-right">
                       {s.status === "approved" ? (
-                        <span className="flex items-center gap-1 text-xs text-green-600">
+                        <span className="flex items-center justify-end gap-1 text-xs text-green-600">
                           <CheckCircle2 className="w-3.5 h-3.5" />
                           Aprobada
                         </span>
                       ) : (
-                        <span className="flex items-center gap-1 text-xs text-red-600">
+                        <span className="flex items-center justify-end gap-1 text-xs text-red-600">
                           <XCircle className="w-3.5 h-3.5" />
                           Rechazada
+                        </span>
+                      )}
+                      {(s.reviewed_by_name || s.reviewed_by_email) && (
+                        <span
+                          className="block text-[11px] text-gray-400 mt-0.5 max-w-[10rem] truncate"
+                          title={s.reviewed_by_email ?? undefined}
+                        >
+                          por {s.reviewed_by_name || s.reviewed_by_email}
+                        </span>
+                      )}
+                      {s.reviewed_at && (
+                        <span className="block text-[11px] text-gray-400">
+                          {fmtDate(s.reviewed_at)}
                         </span>
                       )}
                     </div>
@@ -544,6 +620,68 @@ export default function Review() {
               </div>
             );
           })}
+        </div>
+      )}
+
+      {/* ── HU-28: controles de paginación ───────────────────────────────── */}
+      {total > 0 && (
+        <div className="flex items-center justify-between gap-3 flex-wrap pt-1">
+          <label className="flex items-center gap-2 text-xs text-gray-500">
+            Mostrar
+            <select
+              value={pageSize}
+              onChange={(e) => setPageSize(Number(e.target.value))}
+              className="border border-gray-200 rounded-lg px-2 py-1 text-xs bg-white focus:outline-none focus:ring-2 focus:ring-violet-400"
+            >
+              {[10, 25, 50].map((n) => (
+                <option key={n} value={n}>
+                  {n}
+                </option>
+              ))}
+            </select>
+            por página
+          </label>
+
+          {totalPages > 1 && (
+            <div className="flex items-center gap-1">
+              <button
+                onClick={() => goToPage(page - 1)}
+                disabled={page <= 1}
+                className="px-2.5 py-1.5 text-xs font-medium rounded-lg border border-gray-200 bg-white text-gray-600 hover:border-violet-300 disabled:opacity-40 disabled:hover:border-gray-200"
+              >
+                Anterior
+              </button>
+
+              {pageNumbers().map((p, i) =>
+                p === "…" ? (
+                  <span key={`gap-${i}`} className="px-1.5 text-xs text-gray-400">
+                    …
+                  </span>
+                ) : (
+                  <button
+                    key={p}
+                    onClick={() => goToPage(p)}
+                    aria-current={p === page ? "page" : undefined}
+                    className={`min-w-[2rem] px-2 py-1.5 text-xs font-medium rounded-lg border transition-colors ${
+                      p === page
+                        ? "bg-violet-600 text-white border-violet-600"
+                        : "bg-white text-gray-600 border-gray-200 hover:border-violet-300"
+                    }`}
+                  >
+                    {p}
+                  </button>
+                ),
+              )}
+
+              <button
+                onClick={() => goToPage(page + 1)}
+                disabled={page >= totalPages}
+                className="px-2.5 py-1.5 text-xs font-medium rounded-lg border border-gray-200 bg-white text-gray-600 hover:border-violet-300 disabled:opacity-40 disabled:hover:border-gray-200"
+              >
+                Siguiente
+              </button>
+            </div>
+          )}
         </div>
       )}
 
