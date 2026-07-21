@@ -845,10 +845,10 @@ class TestWaitHumanApprovalNode:
     """Prueba la transición a estado de espera de revisión humana."""
 
     @patch("app.agents.nodes.AsyncSessionLocal")
-    async def test_changes_documents_to_needs_review(
+    async def test_changes_documents_to_analyzed(
         self, mock_session_factory, mock_db_session
     ):
-        """Los documentos deben pasar a needs_review y crear audit trail."""
+        """HU-23: los documentos pasan a 'analyzed' y se registra el audit trail."""
         doc_ids = [str(uuid.uuid4()), str(uuid.uuid4())]
         mock_session_factory.return_value.__aenter__.return_value = mock_db_session
 
@@ -884,9 +884,9 @@ class TestWaitHumanApprovalNode:
         }
         await wait_human_approval_node(state)
 
-        # Verificar que los documentos cambiaron a needs_review
+        # Verificar que los documentos cambiaron a analyzed (HU-23)
         for doc in docs:
-            assert doc.status == DocumentStatus.needs_review
+            assert doc.status == DocumentStatus.analyzed
 
         # Verificar audit trail
         history_entries = [
@@ -896,7 +896,7 @@ class TestWaitHumanApprovalNode:
         ]
         assert len(history_entries) == len(doc_ids)
         assert history_entries[0].action == "agent_completed"
-        assert history_entries[0].after_content["status"] == "needs_review"
+        assert history_entries[0].after_content["status"] == "analyzed"
 
         mock_db_session.commit.assert_awaited_once()
 
@@ -1446,7 +1446,8 @@ class TestAuditTrail:
         entry = history_calls[0]
         assert entry.action == "agent_completed"
         assert entry.before_content == {"status": "processing"}
-        assert entry.after_content["status"] == "needs_review"
+        # HU-23: al terminar el pipeline el documento queda 'analyzed'
+        assert entry.after_content["status"] == "analyzed"
         assert "suggestions_count" in entry.after_content
 
 

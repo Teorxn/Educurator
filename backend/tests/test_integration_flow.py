@@ -133,7 +133,8 @@ async def test_full_flow_upload_pipeline_approve(tmp_path):
     try:
         # ── 1. Upload vía API real (sin auto-curación en background) ──────
         with (
-            patch("app.api.docs._run_auto_curation", new=AsyncMock()),
+            # HU-22: el upload ahora encola en vez de llamar al pipeline directo
+            patch("app.api.docs.enqueue_curation", new=AsyncMock()),
             patch("app.api.docs.settings") as mock_settings,
         ):
             mock_settings.UPLOAD_DIR = str(tmp_path)
@@ -148,7 +149,8 @@ async def test_full_flow_upload_pipeline_approve(tmp_path):
                 )
         assert resp.status_code == 201, resp.text
         doc_id = resp.json()["id"]
-        assert resp.json()["status"] == "needs_review"
+        # HU-23: el documento nace en cola de procesamiento
+        assert resp.json()["status"] == "queued"
 
         # ── 2. Pipeline: nodos REALES, servicios externos mockeados ───────
         from app.agents.nodes import (

@@ -175,10 +175,21 @@ async def load_documents_node(state: "AgentState") -> dict:
     max_docs = getattr(settings, "MAX_DOCS_PER_CURATION", 20)
     requested_ids = state.get("document_ids") or []
 
+    # Estados elegibles para análisis. Cuando la corrida trae ids explícitos
+    # el documento ya viene de la cola (queued/processing), así que el filtro
+    # debe incluir esos estados: si no, load_documents no encuentra nada y el
+    # pipeline termina vacío.
+    eligible_states = [
+        DocumentStatus.needs_review,
+        DocumentStatus.queued,
+        DocumentStatus.processing,
+        DocumentStatus.analyzed,
+    ]
+
     async with AsyncSessionLocal() as db:
         query = (
             select(Document)
-            .where(Document.status == DocumentStatus.needs_review)
+            .where(Document.status.in_(eligible_states))
             .where(Document.category == DocumentCategory.curated)
             .limit(max_docs)
         )
@@ -1423,9 +1434,10 @@ async def generate_suggestions_node(state: "AgentState") -> dict:
 async def wait_human_approval_node(state: "AgentState") -> dict:
     """Punto de espera para revisión humana.
 
-    Este nodo NO modifica ningún contenido oficial.
-    Solo cambia el status de los documentos a 'needs_review'
-    para que el instructor los revise en la UI.
+    Este nodo NO modifica ningún contenido oficial. Marca los documentos
+    como 'analyzed' (HU-23): el pipeline terminó y sus sugerencias están
+    listas para revisión en la UI. Los documentos ya aprobados o
+    rechazados conservan su estado.
     """
     logger.info("=" * 50)
     logger.info("⏳ wait_human_approval_node — esperando revisión humana")
@@ -1450,17 +1462,27 @@ async def wait_human_approval_node(state: "AgentState") -> dict:
                 if not doc:
                     continue
 
-                # Volver a needs_review para que el instructor revise
-                doc.status = DocumentStatus.needs_review
+                # No pisar decisiones humanas ya tomadas
+                if doc.status in (
+                    DocumentStatus.approved,
+                    DocumentStatus.rejected,
+                    DocumentStatus.archived,
+                ):
+                    continue
+
+                previous = doc.status.value
+                # HU-23: 'analyzed' = pipeline completo, listo para revisión
+                doc.status = DocumentStatus.analyzed
+                doc.error_message = None
 
                 # Audit trail
                 history = DocumentHistory(
                     doc_id=doc_uuid,
                     action="agent_completed",
                     performed_by=None,  # Acción del sistema, no de un usuario
-                    before_content={"status": "processing"},
+                    before_content={"status": previous},
                     after_content={
-                        "status": "needs_review",
+                        "status": DocumentStatus.analyzed.value,
                         "suggestions_count": len(
                             [
                                 s
@@ -1472,7 +1494,9 @@ async def wait_human_approval_node(state: "AgentState") -> dict:
                     reason="Procesamiento por agente completado. Pendiente revisión humana.",
                 )
                 db.add(history)
-                logger.info("  → Documento %s: processing → needs_review", doc_id_str)
+                logger.info(
+                    "  → Documento %s: %s → analyzed", doc_id_str, previous
+                )
 
             except Exception as e:
                 logger.error("  ❌ Error actualizando documento %s: %s", doc_id_str, e)

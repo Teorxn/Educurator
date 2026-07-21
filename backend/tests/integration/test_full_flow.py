@@ -551,14 +551,14 @@ class TestFullCurationPipeline:
     # ------------------------------------------------------------------
 
     @patch("app.agents.nodes.AsyncSessionLocal")
-    async def test_wait_human_approval_returns_doc_to_needs_review(
+    async def test_wait_human_approval_marks_doc_analyzed(
         self,
         mock_session_factory: MagicMock,
         mock_db_session: AsyncMock,
         mock_document_with_pdf: Document,
         real_pdf_text: str,
     ):
-        """wait_human_approval_node debe devolver el doc a needs_review."""
+        """HU-23: wait_human_approval_node deja el doc en 'analyzed'."""
         doc_id = str(mock_document_with_pdf.id)
         mock_session_factory.return_value.__aenter__.return_value = mock_db_session
 
@@ -596,7 +596,7 @@ class TestFullCurationPipeline:
         await wait_human_approval_node(state)
 
         # Verificar que se cambio el estado
-        assert doc_in_db.status == DocumentStatus.needs_review
+        assert doc_in_db.status == DocumentStatus.analyzed
 
         # Verificar que se creo el audit trail
         history_adds = []
@@ -613,7 +613,7 @@ class TestFullCurationPipeline:
         assert history_entry.doc_id == mock_document_with_pdf.id
         assert history_entry.performed_by is None  # accion del sistema
         assert history_entry.before_content == {"status": "processing"}
-        assert history_entry.after_content["status"] == "needs_review"
+        assert history_entry.after_content["status"] == "analyzed"
 
         # Verificar commit
         mock_db_session.commit.assert_awaited()
