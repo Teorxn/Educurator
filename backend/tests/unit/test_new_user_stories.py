@@ -225,7 +225,10 @@ class TestChatGrounding:
         resp = await chat(ChatRequest(question="¿Cuánto dura el curso?"), db, user)
         assert resp.has_context is False
         assert resp.sources == []
-        assert "no encontré información" in resp.answer.lower()
+        # Mensaje específico: el problema es que no hay documentos, no que
+        # la pregunta no tenga respuesta en ellos
+        assert "todavía no hay documentos" in resp.answer.lower()
+        assert resp.searched_documents == 0
 
     async def test_irrelevant_chunks_do_not_reach_llm(self):
         """Si ningún chunk supera el umbral, se responde sin contexto."""

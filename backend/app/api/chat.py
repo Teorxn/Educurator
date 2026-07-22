@@ -25,7 +25,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.dependencies import get_current_user
 from app.config import settings
 from app.database import get_db
-from app.models.models import Document, User, UserRole
+from app.models.models import Document, User
 
 logger = logging.getLogger(__name__)
 
@@ -35,6 +35,14 @@ _NO_CONTEXT_ANSWER = (
     "No encontré información suficiente en tu base de conocimiento para "
     "responder esa pregunta. Prueba subiendo documentos relacionados o "
     "reformulando la consulta."
+)
+
+# Mensaje distinto cuando el problema no es la pregunta sino que el usuario
+# todavía no tiene documentos a su alcance (evita confundir ambas causas).
+_NO_DOCUMENTS_ANSWER = (
+    "Todavía no hay documentos en tu base de conocimiento. Sube material "
+    "del curso desde «Subir documento» y, cuando el agente termine de "
+    "analizarlo, podrás hacerle preguntas."
 )
 
 
@@ -60,6 +68,9 @@ class ChatResponse(BaseModel):
     confidence: float
     has_context: bool
     model: str | None = None
+    # Documentos dentro del alcance de la búsqueda (transparencia para el
+    # usuario: aclara si la respuesta vacía se debe a falta de material)
+    searched_documents: int = 0
 
 
 # ── Recuperación (RAG) ───────────────────────────────────────────────────────
@@ -130,18 +141,34 @@ async def chat(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """Responde una pregunta usando solo los documentos del usuario (RAG)."""
-    # ── 1. Alcance: documentos del usuario (admin ve todos) ───────────────
+    """Responde una pregunta usando los documentos accesibles (RAG).
+
+    ALCANCE: la base de conocimiento de EduCurator es institucional, no
+    personal — la lista de documentos, la revisión de sugerencias y las
+    analíticas son compartidas por todo el equipo docente. El chat usa el
+    MISMO alcance que `GET /api/docs`: si un documento es visible en la
+    aplicación, también se puede preguntar sobre él. Filtrar aquí por
+    propietario producía el efecto desconcertante de ver documentos en la
+    lista que el chat decía no encontrar.
+
+    Si en el futuro se requiere aislamiento por docente (multi-tenancy),
+    el filtro debe aplicarse de forma consistente en TODOS los endpoints
+    de documentos, no solo aquí.
+    """
     query = select(Document.id, Document.original_filename)
-    if current_user.role != UserRole.admin:
-        query = query.where(Document.uploaded_by == current_user.id)
     if body.doc_ids:
         query = query.where(Document.id.in_(body.doc_ids))
 
     rows = (await db.execute(query)).all()
     if not rows:
+        logger.info(
+            "💬 Chat sin documentos accesibles para %s", current_user.email
+        )
         return ChatResponse(
-            answer=_NO_CONTEXT_ANSWER, sources=[], confidence=0.0, has_context=False
+            answer=_NO_DOCUMENTS_ANSWER,
+            sources=[],
+            confidence=0.0,
+            has_context=False,
         )
 
     doc_names = {str(doc_id): name for doc_id, name in rows}
@@ -159,11 +186,20 @@ async def chat(
             detail=f"No se pudo consultar la base de conocimiento: {e}",
         )
 
-    relevant = [c for c in chunks if c["similarity"] >= settings.CHAT_MIN_SIMILARITY]
+    # El umbral protege contra falsos positivos al buscar en TODA la base.
+    # Si el usuario acotó la consulta a documentos concretos ya declaró el
+    # alcance: exigir además alta afinidad haría fallar preguntas legítimas
+    # y genéricas ("resume este documento") sobre material corto.
+    threshold = 0.0 if body.doc_ids else settings.CHAT_MIN_SIMILARITY
+    relevant = [c for c in chunks if c["similarity"] >= threshold]
     if not relevant:
         logger.info("💬 Chat sin contexto relevante para: '%s'", body.question[:60])
         return ChatResponse(
-            answer=_NO_CONTEXT_ANSWER, sources=[], confidence=0.0, has_context=False
+            answer=_NO_CONTEXT_ANSWER,
+            sources=[],
+            confidence=0.0,
+            has_context=False,
+            searched_documents=len(allowed_ids),
         )
 
     sources = [
@@ -197,6 +233,7 @@ async def chat(
             confidence=confidence,
             has_context=True,
             model=None,
+            searched_documents=len(allowed_ids),
         )
 
     from langchain_core.messages import HumanMessage, SystemMessage
@@ -268,4 +305,5 @@ async def chat(
         confidence=confidence,
         has_context=True,
         model=str(model_name),
+        searched_documents=len(allowed_ids),
     )

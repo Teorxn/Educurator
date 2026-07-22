@@ -23,11 +23,49 @@ interface Turn {
   loading: boolean;
 }
 
-const EXAMPLES = [
-  "¿Cuáles son los criterios de evaluación del curso?",
-  "¿Qué requisitos debe cumplir la entrega final?",
-  "Resume los temas principales del material",
-];
+/** Nombre legible de un documento (sin extensión ni separadores). */
+function docTitle(filename: string): string {
+  return filename
+    .replace(/\.[a-z0-9]{2,5}$/i, "")
+    .replace(/[_-]+/g, " ")
+    .trim()
+    .slice(0, 45);
+}
+
+interface Suggestion {
+  label: string;
+  question: string;
+  docId: string;
+}
+
+/** Documentos que el agente ya procesó (los únicos consultables). */
+function analyzedDocs(documents: Document[]): Document[] {
+  return documents.filter(
+    (d) => d.status === "analyzed" || d.status === "approved",
+  );
+}
+
+/**
+ * Preguntas sugeridas a partir de los documentos ya analizados.
+ *
+ * Cada sugerencia acota la búsqueda a SU documento (doc_ids), de modo que
+ * siempre recupera contexto: las sugerencias genéricas fallaban cuando el
+ * material del usuario no trataba esos temas, dando la falsa impresión de
+ * que el chat no funcionaba.
+ */
+function buildSuggestions(documents: Document[]): Suggestion[] {
+  const docs = analyzedDocs(documents).slice(0, 3);
+  const plantillas = [
+    "¿Cuáles son los puntos principales de este documento?",
+    "Resume el contenido de este documento",
+    "¿Qué requisitos o criterios establece este documento?",
+  ];
+  return docs.map((d, i) => ({
+    label: `${plantillas[i % plantillas.length]} — ${docTitle(d.filename)}`,
+    question: plantillas[i % plantillas.length],
+    docId: d.id,
+  }));
+}
 
 /** HU-31 — Consultar información mediante lenguaje natural (RAG con fuentes). */
 export default function Chat() {
@@ -39,8 +77,13 @@ export default function Chat() {
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   const bottomRef = useRef<HTMLDivElement>(null);
 
+  // Sugerencias acotadas a documentos ya analizados (siempre dan contexto)
+  const suggestions = buildSuggestions(documents);
+
   useEffect(() => {
-    getDocs({ limit: 100 })
+    // category:"all" — el chat consulta tanto material del curso como el
+    // corpus de referencia; el selector debe reflejar el mismo alcance
+    getDocs({ limit: 100, category: "all" })
       .then(({ data }) => setDocuments(data.items))
       .catch(() => {});
   }, []);
@@ -49,7 +92,7 @@ export default function Chat() {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [turns]);
 
-  const ask = async (text: string) => {
+  const ask = async (text: string, forceDocId?: string) => {
     const q = text.trim();
     if (!q || sending) return;
 
@@ -58,8 +101,10 @@ export default function Chat() {
     setQuestion("");
     setSending(true);
 
+    // Las sugerencias acotan la búsqueda a su propio documento
+    const scope = forceDocId || docFilter;
     try {
-      const { data } = await askChat(q, docFilter ? [docFilter] : undefined);
+      const { data } = await askChat(q, scope ? [scope] : undefined);
       setTurns((prev) =>
         prev.map((t) => (t.id === id ? { ...t, answer: data, loading: false } : t)),
       );
@@ -118,21 +163,43 @@ export default function Chat() {
               Pregunta sobre tus documentos
             </p>
             <p className="text-sm text-gray-400 mt-1 max-w-md">
-              Las respuestas se basan únicamente en el contenido que has subido,
-              y siempre citan el documento y fragmento de origen.
+              Las respuestas se basan únicamente en el contenido disponible, y
+              siempre citan el documento y fragmento de origen.
             </p>
-            <div className="flex flex-col gap-2 mt-5 w-full max-w-md">
-              {EXAMPLES.map((ex) => (
-                <button
-                  key={ex}
-                  onClick={() => ask(ex)}
-                  className="flex items-center gap-2 text-left text-sm text-gray-600 bg-white border border-gray-200 hover:border-violet-300 hover:bg-violet-50/40 rounded-xl px-3.5 py-2.5 transition-colors"
-                >
-                  <Sparkles className="w-3.5 h-3.5 text-violet-400 shrink-0" />
-                  {ex}
-                </button>
-              ))}
-            </div>
+
+            {suggestions.length === 0 ? (
+              <p className="text-sm text-gray-500 mt-5 max-w-md">
+                Aún no hay documentos analizados que consultar. Sube material
+                desde «Subir documento» y, cuando el agente termine de
+                analizarlo, podrás preguntarle.
+              </p>
+            ) : (
+              <>
+                <p className="text-xs text-gray-400 mt-5">
+                  Prueba con una de estas preguntas:
+                </p>
+                <div className="flex flex-col gap-2 mt-2 w-full max-w-lg">
+                  {suggestions.map((s) => (
+                    <button
+                      key={s.docId}
+                      onClick={() => ask(s.question, s.docId)}
+                      className="flex items-start gap-2 text-left text-sm text-gray-600 bg-white border border-gray-200 hover:border-violet-300 hover:bg-violet-50/40 rounded-xl px-3.5 py-2.5 transition-colors"
+                    >
+                      <Sparkles className="w-3.5 h-3.5 text-violet-400 shrink-0 mt-0.5" />
+                      <span>
+                        {s.question}
+                        <span className="block text-xs text-gray-400 mt-0.5">
+                          en {docTitle(
+                            documents.find((d) => d.id === s.docId)?.filename ??
+                              "",
+                          )}
+                        </span>
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              </>
+            )}
           </div>
         )}
 
@@ -168,7 +235,7 @@ export default function Chat() {
                       {t.answer.answer}
                     </p>
 
-                    {t.answer.has_context && (
+                    {t.answer.has_context ? (
                       <div className="flex items-center gap-3 mt-2.5 flex-wrap">
                         <span className="text-xs font-medium text-violet-600 bg-violet-50 px-2 py-0.5 rounded-full">
                           Confianza: {Math.round(t.answer.confidence * 100)}%
@@ -179,6 +246,18 @@ export default function Chat() {
                           </span>
                         )}
                       </div>
+                    ) : (
+                      // Sin contexto: aclarar en cuántos documentos se buscó,
+                      // para distinguir "no hay material" de "no aplica"
+                      typeof t.answer.searched_documents === "number" && (
+                        <p className="text-xs text-gray-400 mt-2">
+                          {t.answer.searched_documents > 0
+                            ? `Se buscó en ${t.answer.searched_documents} documento${
+                                t.answer.searched_documents !== 1 ? "s" : ""
+                              } sin encontrar información relacionada.`
+                            : "No hay documentos disponibles para consultar."}
+                        </p>
+                      )
                     )}
 
                     {/* Fuentes desplegables */}
