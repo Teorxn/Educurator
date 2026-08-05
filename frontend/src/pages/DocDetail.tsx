@@ -171,7 +171,7 @@ export default function DocDetail() {
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center h-64 text-gray-400 gap-2">
+      <div className="flex items-center justify-center h-64 text-ink-3 gap-2">
         <RefreshCw className="w-5 h-5 animate-spin" />
         <span className="text-sm">Cargando documento...</span>
       </div>
@@ -181,15 +181,15 @@ export default function DocDetail() {
   if (error || !doc) {
     return (
       <div className="flex flex-col items-center justify-center h-64 text-center">
-        <div className="w-14 h-14 bg-red-50 rounded-2xl flex items-center justify-center mb-4">
-          <FileText className="w-7 h-7 text-red-400" />
+        <div className="w-14 h-14 bg-danger-soft rounded-2xl flex items-center justify-center mb-4">
+          <FileText className="w-7 h-7 text-danger-fg" />
         </div>
-        <p className="text-gray-600 font-medium">
+        <p className="text-ink-2 font-medium">
           {error || "No se pudo cargar el documento"}
         </p>
         <button
           onClick={() => navigate("/docs")}
-          className="mt-4 flex items-center gap-2 bg-violet-600 hover:bg-violet-700 text-white text-sm font-medium px-4 py-2 rounded-lg transition-colors"
+          className="btn btn-primary mt-4"
         >
           <ArrowLeft className="w-3.5 h-3.5" />
           Volver a documentos
@@ -207,30 +207,30 @@ export default function DocDetail() {
       {/* Back button */}
       <button
         onClick={() => navigate("/docs")}
-        className="inline-flex items-center gap-1.5 text-sm text-gray-500 hover:text-violet-600 transition-colors"
+        className="inline-flex items-center gap-1.5 text-sm text-ink-2 hover:text-brand-hover transition-colors"
       >
         <ArrowLeft className="w-4 h-4" />
         Volver a documentos
       </button>
 
       {/* Header card */}
-      <div className="bg-white border border-gray-200 rounded-xl p-5">
+      <div className="card p-5">
         <div className="flex items-start gap-3">
           <span className="text-2xl">{FILE_EMOJI[doc.file_type] ?? "📄"}</span>
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-2 flex-wrap">
-              <h2 className="text-lg font-semibold text-gray-900 truncate">
+              <h2 className="text-lg font-semibold text-ink truncate">
                 {doc.filename}
               </h2>
               {doc.category === "reference" && (
-                <span className="inline-flex items-center gap-1 text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-800 shrink-0">
+                <span className="inline-flex items-center gap-1 text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-warning-soft text-warning-fg shrink-0">
                   📖 Referencia
                 </span>
               )}
             </div>
             {content?.original_filename &&
               content.original_filename !== doc.filename && (
-                <p className="text-xs text-gray-400 mt-0.5">
+                <p className="text-xs text-ink-3 mt-0.5">
                   Original: {content.original_filename}
                 </p>
               )}
@@ -242,7 +242,7 @@ export default function DocDetail() {
             {doc.file_type === "pdf" && (
               <button
                 onClick={() => setShowPreview((v) => !v)}
-                className="p-2 rounded-md text-gray-400 hover:text-violet-600 hover:bg-violet-50 transition-colors"
+                className="p-2 rounded-md text-ink-3 hover:text-brand-hover hover:bg-brand-soft transition-colors"
                 title={showPreview ? "Ocultar vista previa" : "Vista previa"}
               >
                 <Eye className="w-4 h-4" />
@@ -250,7 +250,7 @@ export default function DocDetail() {
             )}
             <button
               onClick={handleDownload}
-              className="p-2 rounded-md text-gray-400 hover:text-violet-600 hover:bg-violet-50 transition-colors"
+              className="p-2 rounded-md text-ink-3 hover:text-brand-hover hover:bg-brand-soft transition-colors"
               title="Descargar original"
             >
               <Download className="w-4 h-4" />
@@ -263,14 +263,14 @@ export default function DocDetail() {
                 <button
                   onClick={handleDelete}
                   disabled={deleting}
-                  className="text-xs font-medium px-2.5 py-1.5 rounded-md bg-red-600 text-white hover:bg-red-700 transition-colors disabled:opacity-50"
+                  className="btn btn-danger btn-sm"
                 >
                   {deleting ? "Eliminando..." : "Confirmar"}
                 </button>
                 <button
                   onClick={() => setConfirmDelete(false)}
                   disabled={deleting}
-                  className="text-xs font-medium px-2.5 py-1.5 rounded-md bg-gray-100 text-gray-600 hover:bg-gray-200 transition-colors"
+                  className="text-xs font-medium px-2.5 py-1.5 rounded-md bg-surface-2 text-ink-2 hover:bg-surface-3 transition-colors"
                 >
                   Cancelar
                 </button>
@@ -278,7 +278,7 @@ export default function DocDetail() {
             ) : (
               <button
                 onClick={() => setConfirmDelete(true)}
-                className="p-2 rounded-md text-gray-400 hover:text-red-600 hover:bg-red-50 transition-colors"
+                className="p-2 rounded-md text-ink-3 hover:text-danger-fg hover:bg-danger-soft transition-colors"
                 title="Eliminar documento"
               >
                 <Trash2 className="w-4 h-4" />
@@ -289,19 +289,19 @@ export default function DocDetail() {
 
         {/* Metadata grid */}
         <div className="mt-4 grid grid-cols-2 sm:grid-cols-4 gap-4 text-sm">
-          <div className="flex items-center gap-2 text-gray-500">
+          <div className="flex items-center gap-2 text-ink-2">
             <HardDrive className="w-3.5 h-3.5 shrink-0" />
             <span>{fmtSize(doc.size_bytes)}</span>
           </div>
-          <div className="flex items-center gap-2 text-gray-500">
+          <div className="flex items-center gap-2 text-ink-2">
             <Hash className="w-3.5 h-3.5 shrink-0" />
             <span className="uppercase">{doc.file_type}</span>
           </div>
-          <div className="flex items-center gap-2 text-gray-500">
+          <div className="flex items-center gap-2 text-ink-2">
             <Clock className="w-3.5 h-3.5 shrink-0" />
             <span>{fmtDate(doc.uploaded_at)}</span>
           </div>
-          <div className="flex items-center gap-2 text-gray-500">
+          <div className="flex items-center gap-2 text-ink-2">
             <Layers className="w-3.5 h-3.5 shrink-0" />
             <span>
               {chunkCount} chunk{chunkCount !== 1 ? "s" : ""} ·{" "}
@@ -310,7 +310,7 @@ export default function DocDetail() {
           </div>
           {/* HU-25 — uploader */}
           {detail?.uploader_email && (
-            <div className="flex items-center gap-2 text-gray-500">
+            <div className="flex items-center gap-2 text-ink-2">
               <UserIcon className="w-3.5 h-3.5 shrink-0" />
               <span className="truncate">{detail.uploader_email}</span>
             </div>
@@ -319,7 +319,7 @@ export default function DocDetail() {
 
         {/* HU-23 — mensaje de error del pipeline */}
         {doc.status === "error" && doc.error_message && (
-          <div className="flex items-start gap-2 mt-3 text-sm text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
+          <div className="flex items-start gap-2 mt-3 text-sm text-danger-fg bg-danger-soft border border-transparent rounded-lg px-3 py-2">
             <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
             {doc.error_message}
           </div>
@@ -327,12 +327,12 @@ export default function DocDetail() {
 
         {/* HU-27 — aprobación del documento */}
         {detail && doc.status !== "approved" && (
-          <div className="flex items-center justify-between gap-3 mt-4 pt-3 border-t border-gray-100 flex-wrap">
-            <p className="text-xs text-gray-500">
+          <div className="flex items-center justify-between gap-3 mt-4 pt-3 border-t border-line flex-wrap">
+            <p className="text-xs text-ink-2">
               {pendingSuggestions > 0 ? (
                 <>
                   No puedes aprobar este documento:{" "}
-                  <strong className="text-yellow-700">
+                  <strong className="text-warning-fg">
                     {pendingSuggestions} sugerencia
                     {pendingSuggestions !== 1 ? "s" : ""}
                   </strong>{" "}
@@ -340,7 +340,7 @@ export default function DocDetail() {
                   {pendingSuggestions !== 1 ? "s" : ""} de revisión.{" "}
                   <button
                     onClick={() => navigate(`/review?document_id=${doc.id}`)}
-                    className="text-violet-600 hover:text-violet-700 font-medium"
+                    className="text-brand hover:text-brand-hover font-medium"
                   >
                     Ir a revisión →
                   </button>
@@ -357,7 +357,7 @@ export default function DocDetail() {
                   ? "Revisa todas las sugerencias antes de aprobar"
                   : "Aprobar documento"
               }
-              className="flex items-center gap-1.5 text-sm font-medium px-3 py-1.5 rounded-lg bg-green-600 text-white hover:bg-green-700 disabled:bg-gray-200 disabled:text-gray-400 disabled:cursor-not-allowed transition-colors"
+              className="btn btn-success btn-sm"
             >
               <CheckCircle2 className="w-4 h-4" />
               {approving ? "Aprobando..." : "Aprobar documento"}
@@ -366,7 +366,7 @@ export default function DocDetail() {
         )}
 
         {approveError && (
-          <div className="flex items-start gap-2 mt-2 text-sm text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
+          <div className="flex items-start gap-2 mt-2 text-sm text-danger-fg bg-danger-soft border border-transparent rounded-lg px-3 py-2">
             <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
             {approveError}
           </div>
@@ -375,7 +375,7 @@ export default function DocDetail() {
 
       {/* HU-25 — vista previa inline del PDF */}
       {showPreview && doc.file_type === "pdf" && (
-        <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+        <div className="card overflow-hidden">
           <iframe
             src={docDownloadUrl(doc.id)}
             title={`Vista previa de ${doc.filename}`}
@@ -385,14 +385,14 @@ export default function DocDetail() {
       )}
 
       {/* Tabs */}
-      <div className="border-b border-gray-200">
+      <div className="border-b border-line">
         <div className="flex gap-6">
           <button
             onClick={() => setActiveTab("content")}
             className={`pb-3 text-sm font-medium border-b-2 transition-colors ${
               activeTab === "content"
-                ? "border-violet-600 text-violet-700"
-                : "border-transparent text-gray-500 hover:text-gray-700"
+                ? "border-brand text-brand"
+                : "border-transparent text-ink-2 hover:text-ink"
             }`}
           >
             <span className="flex items-center gap-1.5">
@@ -404,8 +404,8 @@ export default function DocDetail() {
             onClick={() => setActiveTab("chunks")}
             className={`pb-3 text-sm font-medium border-b-2 transition-colors ${
               activeTab === "chunks"
-                ? "border-violet-600 text-violet-700"
-                : "border-transparent text-gray-500 hover:text-gray-700"
+                ? "border-brand text-brand"
+                : "border-transparent text-ink-2 hover:text-ink"
             }`}
           >
             <span className="flex items-center gap-1.5">
@@ -417,8 +417,8 @@ export default function DocDetail() {
             onClick={() => setActiveTab("history")}
             className={`pb-3 text-sm font-medium border-b-2 transition-colors ${
               activeTab === "history"
-                ? "border-violet-600 text-violet-700"
-                : "border-transparent text-gray-500 hover:text-gray-700"
+                ? "border-brand text-brand"
+                : "border-transparent text-ink-2 hover:text-ink"
             }`}
           >
             <span className="flex items-center gap-1.5">
@@ -432,18 +432,18 @@ export default function DocDetail() {
       {/* Tab content */}
       <div>
         {activeTab === "content" && (
-          <div className="bg-white border border-gray-200 rounded-xl p-5">
+          <div className="card p-5">
             {content?.content ? (
-              <pre className="text-sm text-gray-700 whitespace-pre-wrap font-sans leading-relaxed max-h-[60vh] overflow-y-auto">
+              <pre className="text-sm text-ink whitespace-pre-wrap font-sans leading-relaxed max-h-[60vh] overflow-y-auto">
                 {content.content}
               </pre>
             ) : (
               <div className="flex flex-col items-center justify-center py-12 text-center">
-                <FileText className="w-10 h-10 text-gray-300 mb-3" />
-                <p className="text-gray-500 font-medium">
+                <FileText className="w-10 h-10 text-ink-3 mb-3" />
+                <p className="text-ink-2 font-medium">
                   Sin contenido extraído
                 </p>
-                <p className="text-sm text-gray-400 mt-1">
+                <p className="text-sm text-ink-3 mt-1">
                   El documento aún no ha sido procesado por el pipeline de
                   curación.
                 </p>
@@ -458,9 +458,9 @@ export default function DocDetail() {
               content.chunks.map((chunk) => (
                 <div
                   key={chunk.chunk_index}
-                  className="bg-white border border-gray-200 rounded-xl p-4"
+                  className="card p-4"
                 >
-                  <div className="flex items-center justify-between mb-2 text-xs text-gray-400">
+                  <div className="flex items-center justify-between mb-2 text-xs text-ink-3">
                     <span className="font-mono">
                       Chunk #{chunk.chunk_index + 1}
                     </span>
@@ -471,16 +471,16 @@ export default function DocDetail() {
                       <span>{chunk.token_count} tokens</span>
                     </div>
                   </div>
-                  <p className="text-sm text-gray-700 whitespace-pre-wrap font-sans leading-relaxed line-clamp-6">
+                  <p className="text-sm text-ink whitespace-pre-wrap font-sans leading-relaxed line-clamp-6">
                     {chunk.content}
                   </p>
                 </div>
               ))
             ) : (
               <div className="flex flex-col items-center justify-center py-12 text-center">
-                <Layers className="w-10 h-10 text-gray-300 mb-3" />
-                <p className="text-gray-500 font-medium">Sin chunks</p>
-                <p className="text-sm text-gray-400 mt-1">
+                <Layers className="w-10 h-10 text-ink-3 mb-3" />
+                <p className="text-ink-2 font-medium">Sin chunks</p>
+                <p className="text-sm text-ink-3 mt-1">
                   No hay chunks disponibles para este documento.
                 </p>
               </div>
@@ -489,24 +489,24 @@ export default function DocDetail() {
         )}
 
         {activeTab === "history" && (
-          <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
+          <div className="card overflow-hidden">
             {history.length ? (
-              <div className="divide-y divide-gray-100">
+              <div className="divide-y divide-line">
                 {history.map((h) => (
                   <div key={h.id} className="px-5 py-4">
                     <div className="flex items-center justify-between">
-                      <span className="text-sm font-medium text-gray-800">
+                      <span className="text-sm font-medium text-ink">
                         {ACTION_LABELS[h.action] ?? h.action}
                       </span>
-                      <span className="text-xs text-gray-400">
+                      <span className="text-xs text-ink-3">
                         {fmtDate(h.timestamp)}
                       </span>
                     </div>
                     {h.reason && (
-                      <p className="text-xs text-gray-500 mt-1">{h.reason}</p>
+                      <p className="text-xs text-ink-2 mt-1">{h.reason}</p>
                     )}
                     {h.after_content && (
-                      <p className="text-xs text-gray-400 mt-0.5 font-mono">
+                      <p className="text-xs text-ink-3 mt-0.5 font-mono">
                         {JSON.stringify(h.after_content)}
                       </p>
                     )}
@@ -515,11 +515,11 @@ export default function DocDetail() {
               </div>
             ) : (
               <div className="flex flex-col items-center justify-center py-12 text-center">
-                <Clock className="w-10 h-10 text-gray-300 mb-3" />
-                <p className="text-gray-500 font-medium">
+                <Clock className="w-10 h-10 text-ink-3 mb-3" />
+                <p className="text-ink-2 font-medium">
                   Sin historial de cambios
                 </p>
-                <p className="text-sm text-gray-400 mt-1">
+                <p className="text-sm text-ink-3 mt-1">
                   No se han registrado cambios en el estado de este documento.
                 </p>
               </div>

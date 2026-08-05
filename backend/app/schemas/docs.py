@@ -19,6 +19,8 @@ class DocumentResponse(BaseModel):
     error_message: str | None = None
     # HU-25 — metadatos del documento
     uploaded_by: uuid.UUID | None = None
+    # Visibilidad de documentos: quién lo subió (útil para el admin)
+    uploader_email: str | None = None
 
     model_config = {"from_attributes": True}
 

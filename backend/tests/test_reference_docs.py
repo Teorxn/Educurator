@@ -384,8 +384,15 @@ def _make_api_session(return_docs: list | None = None, total: int = 0):
     mock_count = MagicMock()
     mock_count.scalar_one.return_value = total
 
+    # GET /api/docs hace una 3ra consulta (emails de quien subió cada doc)
+    # solo si hay documentos con uploaded_by; se deja vacía por defecto.
+    mock_uploaders = MagicMock()
+    mock_uploaders.all.return_value = []
+
     session = MagicMock()
-    session.execute = AsyncMock(side_effect=[mock_count, mock_result])
+    session.execute = AsyncMock(
+        side_effect=[mock_count, mock_result, mock_uploaders]
+    )
     return session
 
 

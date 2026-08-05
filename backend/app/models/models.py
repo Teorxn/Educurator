@@ -328,6 +328,87 @@ class Role(Base):
     )
 
 
+# ── HU-31: Conversaciones e historial del chat ───────────────────────────────
+
+
+class ChatConversation(Base):
+    """Hilo de conversación del chat.
+
+    Agrupa preguntas y respuestas para que el docente pueda mantener varias
+    conversaciones en paralelo —típicamente una por documento— y volver a
+    cualquiera de ellas más tarde sin perder el contexto.
+    """
+
+    __tablename__ = "chat_conversations"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id"), nullable=False, index=True
+    )
+    # Se genera con la primera pregunta; el usuario puede renombrarlo.
+    title: Mapped[str] = mapped_column(String(160), nullable=False)
+    # Documento al que se acota la conversación (NULL = toda la base).
+    document_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("documents.id", ondelete="SET NULL"), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    # Ordena la lista por actividad reciente, no por fecha de creación.
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), index=True
+    )
+
+    messages: Mapped[list["ChatHistory"]] = relationship(
+        "ChatHistory",
+        back_populates="conversation",
+        cascade="all, delete-orphan",
+        order_by="ChatHistory.created_at",
+    )
+
+
+class ChatHistory(Base):
+    """Registro persistente de cada pregunta/respuesta del chat (HU-31).
+
+    Alimenta el contador total de preguntas y el panel de historial: sin
+    esto, recargar la página o volver más tarde perdía toda conversación
+    previa (solo vivía en el estado de React).
+    """
+
+    __tablename__ = "chat_history"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id"), nullable=False, index=True
+    )
+    # Nullable: las preguntas registradas antes de existir las conversaciones
+    # no pertenecen a ningún hilo.
+    conversation_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("chat_conversations.id", ondelete="CASCADE"),
+        nullable=True,
+        index=True,
+    )
+    question: Mapped[str] = mapped_column(Text, nullable=False)
+    answer: Mapped[str] = mapped_column(Text, nullable=False)
+    has_context: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    confidence: Mapped[float] = mapped_column(Float, default=0.0, nullable=False)
+    sources: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    model: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    searched_documents: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), index=True
+    )
+
+    conversation: Mapped["ChatConversation | None"] = relationship(
+        "ChatConversation", back_populates="messages"
+    )
+
+
 # ── HU-32: Consumo de tokens del LLM ─────────────────────────────────────────
 
 

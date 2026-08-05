@@ -34,6 +34,7 @@ from app.schemas.suggestions import (
     SuggestionResponse,
     SuggestionsListResponse,
 )
+from app.services.access import can_access_doc, visible_docs_filter
 from app.services.evidence import get_chunks_evidence
 
 router = APIRouter(prefix="/api/suggestions", tags=["suggestions"])
@@ -50,10 +51,21 @@ async def list_suggestions(
     page: int = Query(1, ge=1),
     limit: int = Query(20, ge=1, le=100),
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user),
 ):
     query = select(Suggestion).order_by(Suggestion.created_at.desc())
     count_q = select(func.count()).select_from(Suggestion)
+
+    # Una sugerencia solo es visible si su documento lo es (curado privado
+    # por docente, referencia compartida, admin ve todo).
+    visibility = visible_docs_filter(current_user)
+    if visibility is not None:
+        query = query.join(Document, Document.id == Suggestion.document_id).where(
+            visibility
+        )
+        count_q = count_q.join(
+            Document, Document.id == Suggestion.document_id
+        ).where(visibility)
 
     if status_filter:
         try:
@@ -153,14 +165,17 @@ async def approve_suggestion(
     if suggestion.status != SuggestionStatus.pending:
         raise HTTPException(status_code=400, detail="Suggestion is not pending")
 
+    doc = (
+        await db.execute(select(Document).where(Document.id == suggestion.document_id))
+    ).scalar_one_or_none()
+    if doc and not can_access_doc(doc, current_user):
+        raise HTTPException(status_code=403, detail="No tienes acceso a este documento")
+
     old_status = suggestion.status.value
     suggestion.status = SuggestionStatus.approved
     suggestion.reviewed_by = current_user.id
     suggestion.reviewed_at = datetime.now(timezone.utc)
 
-    doc = (
-        await db.execute(select(Document).where(Document.id == suggestion.document_id))
-    ).scalar_one_or_none()
     if doc:
         doc.status = DocumentStatus.approved
 
@@ -215,15 +230,18 @@ async def reject_suggestion(
     if suggestion.status != SuggestionStatus.pending:
         raise HTTPException(status_code=400, detail="Suggestion is not pending")
 
+    doc = (
+        await db.execute(select(Document).where(Document.id == suggestion.document_id))
+    ).scalar_one_or_none()
+    if doc and not can_access_doc(doc, current_user):
+        raise HTTPException(status_code=403, detail="No tienes acceso a este documento")
+
     old_status = suggestion.status.value
     suggestion.status = SuggestionStatus.rejected
     suggestion.reviewed_by = current_user.id
     suggestion.review_reason = body.reason.strip()
     suggestion.reviewed_at = datetime.now(timezone.utc)
 
-    doc = (
-        await db.execute(select(Document).where(Document.id == suggestion.document_id))
-    ).scalar_one_or_none()
     if doc:
         doc.status = DocumentStatus.rejected
 

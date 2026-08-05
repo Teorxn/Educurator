@@ -16,16 +16,24 @@ Reglas anti-alucinación:
 import asyncio
 import logging
 import uuid
+from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.dependencies import get_current_user
 from app.config import settings
 from app.database import get_db
-from app.models.models import Document, User
+from app.models.models import (
+    ChatConversation,
+    ChatHistory,
+    Document,
+    DocumentChunk,
+    User,
+)
+from app.services.access import can_access_doc, visible_docs_filter
 
 logger = logging.getLogger(__name__)
 
@@ -52,6 +60,8 @@ _NO_DOCUMENTS_ANSWER = (
 class ChatRequest(BaseModel):
     question: str = Field(min_length=3, max_length=1000)
     doc_ids: list[uuid.UUID] | None = None
+    # Hilo al que pertenece la pregunta. Si falta, se abre uno nuevo.
+    conversation_id: uuid.UUID | None = None
 
 
 class ChatSource(BaseModel):
@@ -71,6 +81,51 @@ class ChatResponse(BaseModel):
     # Documentos dentro del alcance de la búsqueda (transparencia para el
     # usuario: aclara si la respuesta vacía se debe a falta de material)
     searched_documents: int = 0
+    # Hilo en el que quedó registrada (el frontend lo necesita cuando la
+    # conversación se acaba de crear con esta misma pregunta).
+    conversation_id: uuid.UUID | None = None
+
+
+class ConversationSummary(BaseModel):
+    id: uuid.UUID
+    title: str
+    document_id: uuid.UUID | None = None
+    document_name: str | None = None
+    message_count: int = 0
+    created_at: datetime
+    updated_at: datetime
+
+
+class ConversationsListResponse(BaseModel):
+    items: list[ConversationSummary]
+    total: int
+
+
+class CreateConversationRequest(BaseModel):
+    title: str | None = Field(default=None, max_length=160)
+    document_id: uuid.UUID | None = None
+
+
+class RenameConversationRequest(BaseModel):
+    title: str = Field(min_length=1, max_length=160)
+
+
+class ChatHistoryEntry(BaseModel):
+    id: uuid.UUID
+    question: str
+    answer: str
+    has_context: bool
+    confidence: float
+    sources: list[ChatSource]
+    model: str | None = None
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class ChatHistoryResponse(BaseModel):
+    items: list[ChatHistoryEntry]
+    total: int
 
 
 # ── Recuperación (RAG) ───────────────────────────────────────────────────────
@@ -132,6 +187,126 @@ def _retrieve_chunks(question: str, allowed_doc_ids: list[str], top_k: int) -> l
     return out
 
 
+async def _fallback_chunks_from_postgres(
+    db: AsyncSession, doc_id: str, limit: int = 5
+) -> list[dict]:
+    """Recupera chunks directo de Postgres cuando ChromaDB no devolvió nada.
+
+    Cubre el caso de un documento explícitamente elegido (p. ej. al hacer
+    clic en una pregunta sugerida) cuyo contenido SÍ existe (DocumentChunk
+    se crea en el mismo pipeline que analiza el documento) pero que por
+    algún desajuste con el índice vectorial no aparece en la búsqueda
+    semántica. Sin esto, el usuario recibe "no encontré información" sobre
+    un documento que evidentemente sí tiene contenido analizado.
+    """
+    try:
+        doc_uuid = uuid.UUID(doc_id)
+    except ValueError:
+        return []
+
+    rows = (
+        await db.execute(
+            select(DocumentChunk)
+            .where(DocumentChunk.document_id == doc_uuid)
+            .order_by(DocumentChunk.chunk_index)
+            .limit(limit)
+        )
+    ).scalars().all()
+
+    return [
+        {
+            "chunk_id": c.chroma_id or f"{doc_id}_chunk_{c.chunk_index}",
+            "doc_id": doc_id,
+            "chunk_index": c.chunk_index,
+            "content": c.content,
+            # Sin ranking semántico: valor neutro, no comparable al de Chroma.
+            "similarity": 0.5,
+        }
+        for c in rows
+    ]
+
+
+def _title_from_question(question: str) -> str:
+    """Título legible a partir de la primera pregunta del hilo."""
+    clean = " ".join(question.strip().split())
+    return clean[:77] + "…" if len(clean) > 78 else clean
+
+
+async def _resolve_conversation(
+    db: AsyncSession,
+    user_id: uuid.UUID,
+    conversation_id: uuid.UUID | None,
+    question: str,
+    document_id: uuid.UUID | None,
+) -> ChatConversation | None:
+    """Devuelve el hilo indicado, o abre uno nuevo titulado con la pregunta.
+
+    Si el `conversation_id` recibido no existe o es de otro usuario se abre
+    uno nuevo en lugar de fallar: perder la respuesta por un id obsoleto
+    sería peor que empezar un hilo.
+    """
+    if conversation_id:
+        convo = (
+            await db.execute(
+                select(ChatConversation).where(
+                    ChatConversation.id == conversation_id,
+                    ChatConversation.user_id == user_id,
+                )
+            )
+        ).scalar_one_or_none()
+        if convo:
+            return convo
+
+    convo = ChatConversation(
+        user_id=user_id,
+        title=_title_from_question(question),
+        document_id=document_id,
+    )
+    db.add(convo)
+    await db.flush()
+    return convo
+
+
+async def _save_history(
+    db: AsyncSession,
+    user_id: uuid.UUID,
+    question: str,
+    answer: str,
+    *,
+    has_context: bool,
+    confidence: float,
+    sources: list[ChatSource],
+    model: str | None,
+    searched_documents: int,
+    conversation: ChatConversation | None = None,
+) -> None:
+    """Persiste la pregunta/respuesta para el contador y el panel de historial.
+
+    Un fallo al guardar NO debe romper la respuesta que ya se le va a dar
+    al usuario: se registra en el log y se continúa.
+    """
+    try:
+        entry = ChatHistory(
+            user_id=user_id,
+            conversation_id=conversation.id if conversation else None,
+            question=question,
+            answer=answer,
+            has_context=has_context,
+            confidence=confidence,
+            sources=[s.model_dump() for s in sources],
+            model=model,
+            searched_documents=searched_documents,
+        )
+        db.add(entry)
+        if conversation is not None:
+            # Ordena la lista de hilos por actividad, no por creación.
+            conversation.updated_at = datetime.now(timezone.utc)
+        await db.commit()
+    except Exception:
+        logger.exception("No se pudo guardar el historial del chat")
+        await db.rollback()
+
+
 # ── Endpoint ─────────────────────────────────────────────────────────────────
 
 
@@ -143,19 +318,27 @@ async def chat(
 ):
     """Responde una pregunta usando los documentos accesibles (RAG).
 
-    ALCANCE: la base de conocimiento de EduCurator es institucional, no
-    personal — la lista de documentos, la revisión de sugerencias y las
-    analíticas son compartidas por todo el equipo docente. El chat usa el
-    MISMO alcance que `GET /api/docs`: si un documento es visible en la
-    aplicación, también se puede preguntar sobre él. Filtrar aquí por
-    propietario producía el efecto desconcertante de ver documentos en la
-    lista que el chat decía no encontrar.
-
-    Si en el futuro se requiere aislamiento por docente (multi-tenancy),
-    el filtro debe aplicarse de forma consistente en TODOS los endpoints
-    de documentos, no solo aquí.
+    ALCANCE: el mismo que `GET /api/docs` — material curado privado por
+    docente (solo su autor y los administradores), corpus de referencia
+    compartido por todos. Se aplica el mismo filtro aquí para que el chat
+    nunca diga "no encontré información" sobre un documento que el usuario
+    ni siquiera puede ver en la lista, ni tampoco sobre uno que SÍ ve pero
+    que pertenece a otro docente.
     """
+    # El hilo se resuelve antes de responder para que toda pregunta quede
+    # registrada en una conversación, incluidas las que no encuentran contexto.
+    conversation = await _resolve_conversation(
+        db,
+        current_user.id,
+        body.conversation_id,
+        body.question,
+        body.doc_ids[0] if body.doc_ids and len(body.doc_ids) == 1 else None,
+    )
+
     query = select(Document.id, Document.original_filename)
+    visibility = visible_docs_filter(current_user)
+    if visibility is not None:
+        query = query.where(visibility)
     if body.doc_ids:
         query = query.where(Document.id.in_(body.doc_ids))
 
@@ -164,11 +347,24 @@ async def chat(
         logger.info(
             "💬 Chat sin documentos accesibles para %s", current_user.email
         )
+        await _save_history(
+            db,
+            current_user.id,
+            body.question,
+            _NO_DOCUMENTS_ANSWER,
+            has_context=False,
+            confidence=0.0,
+            sources=[],
+            model=None,
+            searched_documents=0,
+            conversation=conversation,
+        )
         return ChatResponse(
             answer=_NO_DOCUMENTS_ANSWER,
             sources=[],
             confidence=0.0,
             has_context=False,
+            conversation_id=conversation.id if conversation else None,
         )
 
     doc_names = {str(doc_id): name for doc_id, name in rows}
@@ -192,14 +388,34 @@ async def chat(
     # y genéricas ("resume este documento") sobre material corto.
     threshold = 0.0 if body.doc_ids else settings.CHAT_MIN_SIMILARITY
     relevant = [c for c in chunks if c["similarity"] >= threshold]
+
+    # Alcance a UN documento explícito (p. ej. pregunta sugerida) sin
+    # resultados en Chroma → intentar con el contenido crudo de Postgres
+    # antes de rendirse (ver _fallback_chunks_from_postgres).
+    if not relevant and body.doc_ids and len(allowed_ids) == 1:
+        relevant = await _fallback_chunks_from_postgres(db, allowed_ids[0])
+
     if not relevant:
         logger.info("💬 Chat sin contexto relevante para: '%s'", body.question[:60])
+        await _save_history(
+            db,
+            current_user.id,
+            body.question,
+            _NO_CONTEXT_ANSWER,
+            has_context=False,
+            confidence=0.0,
+            sources=[],
+            model=None,
+            searched_documents=len(allowed_ids),
+            conversation=conversation,
+        )
         return ChatResponse(
             answer=_NO_CONTEXT_ANSWER,
             sources=[],
             confidence=0.0,
             has_context=False,
             searched_documents=len(allowed_ids),
+            conversation_id=conversation.id if conversation else None,
         )
 
     sources = [
@@ -224,16 +440,30 @@ async def chat(
             f"• {s.doc_name} (fragmento {s.chunk_index}): {s.excerpt}"
             for s in sources[:3]
         )
+        no_llm_answer = (
+            "No hay un modelo de lenguaje configurado, pero encontré estos "
+            f"fragmentos relevantes en tus documentos:\n\n{extract}"
+        )
+        await _save_history(
+            db,
+            current_user.id,
+            body.question,
+            no_llm_answer,
+            has_context=True,
+            confidence=confidence,
+            sources=sources,
+            model=None,
+            searched_documents=len(allowed_ids),
+            conversation=conversation,
+        )
         return ChatResponse(
-            answer=(
-                "No hay un modelo de lenguaje configurado, pero encontré estos "
-                f"fragmentos relevantes en tus documentos:\n\n{extract}"
-            ),
+            answer=no_llm_answer,
             sources=sources,
             confidence=confidence,
             has_context=True,
             model=None,
             searched_documents=len(allowed_ids),
+            conversation_id=conversation.id if conversation else None,
         )
 
     from langchain_core.messages import HumanMessage, SystemMessage
@@ -299,6 +529,18 @@ async def chat(
         confidence,
         body.question[:60],
     )
+    await _save_history(
+        db,
+        current_user.id,
+        body.question,
+        answer,
+        has_context=True,
+        confidence=confidence,
+        sources=sources,
+        model=str(model_name),
+        searched_documents=len(allowed_ids),
+        conversation=conversation,
+    )
     return ChatResponse(
         answer=answer,
         sources=sources,
@@ -306,4 +548,234 @@ async def chat(
         has_context=True,
         model=str(model_name),
         searched_documents=len(allowed_ids),
+        conversation_id=conversation.id if conversation else None,
     )
+
+
+# ── GET /api/chat/history ────────────────────────────────────────────────────
+
+
+@router.get("/history", response_model=ChatHistoryResponse)
+async def get_chat_history(
+    page: int = Query(1, ge=1),
+    limit: int = Query(20, ge=1, le=100),
+    conversation_id: uuid.UUID | None = Query(None),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Historial personal de preguntas (HU-31).
+
+    Sin `conversation_id` devuelve todas las preguntas del usuario (alimenta el
+    contador total); con él, sólo los mensajes de ese hilo, en orden cronológico
+    para poder reconstruir la conversación.
+    """
+    base = select(ChatHistory).where(ChatHistory.user_id == current_user.id)
+    count_q = (
+        select(func.count())
+        .select_from(ChatHistory)
+        .where(ChatHistory.user_id == current_user.id)
+    )
+    if conversation_id:
+        base = base.where(ChatHistory.conversation_id == conversation_id)
+        count_q = count_q.where(ChatHistory.conversation_id == conversation_id)
+
+    # Dentro de un hilo se lee de la más antigua a la más reciente; el listado
+    # general se muestra al revés (lo último preguntado primero).
+    order = (
+        ChatHistory.created_at.asc() if conversation_id else ChatHistory.created_at.desc()
+    )
+
+    total = (await db.execute(count_q)).scalar_one()
+    rows = (
+        (
+            await db.execute(
+                base.order_by(order).offset((page - 1) * limit).limit(limit)
+            )
+        )
+        .scalars()
+        .all()
+    )
+
+    items = [
+        ChatHistoryEntry(
+            id=r.id,
+            question=r.question,
+            answer=r.answer,
+            has_context=r.has_context,
+            confidence=r.confidence,
+            sources=[ChatSource(**s) for s in (r.sources or [])],
+            model=r.model,
+            created_at=r.created_at,
+        )
+        for r in rows
+    ]
+    return ChatHistoryResponse(items=items, total=total)
+
+
+# ── Conversaciones ───────────────────────────────────────────────────────────
+
+
+async def _owned_conversation(
+    db: AsyncSession, conversation_id: uuid.UUID, user: User
+) -> ChatConversation:
+    """Recupera un hilo del usuario o lanza 404.
+
+    Devuelve 404 —y no 403— cuando el hilo es de otra persona: confirmar su
+    existencia filtraría información sobre conversaciones ajenas.
+    """
+    convo = (
+        await db.execute(
+            select(ChatConversation).where(
+                ChatConversation.id == conversation_id,
+                ChatConversation.user_id == user.id,
+            )
+        )
+    ).scalar_one_or_none()
+    if not convo:
+        raise HTTPException(status_code=404, detail="Conversación no encontrada")
+    return convo
+
+
+@router.get("/conversations", response_model=ConversationsListResponse)
+async def list_conversations(
+    limit: int = Query(50, ge=1, le=200),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Hilos del usuario, del más activo al más antiguo."""
+    total = (
+        await db.execute(
+            select(func.count())
+            .select_from(ChatConversation)
+            .where(ChatConversation.user_id == current_user.id)
+        )
+    ).scalar_one()
+
+    # Conteo de mensajes y nombre del documento en una sola consulta.
+    rows = (
+        await db.execute(
+            select(
+                ChatConversation,
+                Document.filename,
+                func.count(ChatHistory.id),
+            )
+            .outerjoin(Document, Document.id == ChatConversation.document_id)
+            .outerjoin(
+                ChatHistory, ChatHistory.conversation_id == ChatConversation.id
+            )
+            .where(ChatConversation.user_id == current_user.id)
+            .group_by(ChatConversation.id, Document.filename)
+            .order_by(ChatConversation.updated_at.desc())
+            .limit(limit)
+        )
+    ).all()
+
+    items = [
+        ConversationSummary(
+            id=convo.id,
+            title=convo.title,
+            document_id=convo.document_id,
+            document_name=doc_name,
+            message_count=count or 0,
+            created_at=convo.created_at,
+            updated_at=convo.updated_at,
+        )
+        for convo, doc_name, count in rows
+    ]
+    return ConversationsListResponse(items=items, total=total)
+
+
+@router.post(
+    "/conversations",
+    response_model=ConversationSummary,
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_conversation(
+    body: CreateConversationRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Abre un hilo vacío, opcionalmente acotado a un documento."""
+    doc_name = None
+    if body.document_id:
+        doc = (
+            await db.execute(
+                select(Document).where(Document.id == body.document_id)
+            )
+        ).scalar_one_or_none()
+        if not doc or not can_access_doc(doc, current_user):
+            raise HTTPException(
+                status_code=404, detail="Documento no encontrado"
+            )
+        doc_name = doc.filename
+
+    convo = ChatConversation(
+        user_id=current_user.id,
+        title=(body.title or "").strip() or "Nueva conversación",
+        document_id=body.document_id,
+    )
+    db.add(convo)
+    await db.commit()
+    await db.refresh(convo)
+
+    return ConversationSummary(
+        id=convo.id,
+        title=convo.title,
+        document_id=convo.document_id,
+        document_name=doc_name,
+        message_count=0,
+        created_at=convo.created_at,
+        updated_at=convo.updated_at,
+    )
+
+
+@router.patch("/conversations/{conversation_id}", response_model=ConversationSummary)
+async def rename_conversation(
+    conversation_id: uuid.UUID,
+    body: RenameConversationRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    convo = await _owned_conversation(db, conversation_id, current_user)
+    convo.title = body.title.strip()
+    await db.commit()
+    await db.refresh(convo)
+
+    doc_name = None
+    if convo.document_id:
+        doc_name = (
+            await db.execute(
+                select(Document.filename).where(Document.id == convo.document_id)
+            )
+        ).scalar_one_or_none()
+    count = (
+        await db.execute(
+            select(func.count())
+            .select_from(ChatHistory)
+            .where(ChatHistory.conversation_id == convo.id)
+        )
+    ).scalar_one()
+
+    return ConversationSummary(
+        id=convo.id,
+        title=convo.title,
+        document_id=convo.document_id,
+        document_name=doc_name,
+        message_count=count or 0,
+        created_at=convo.created_at,
+        updated_at=convo.updated_at,
+    )
+
+
+@router.delete(
+    "/conversations/{conversation_id}", status_code=status.HTTP_204_NO_CONTENT
+)
+async def delete_conversation(
+    conversation_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Elimina el hilo y sus mensajes (ON DELETE CASCADE)."""
+    convo = await _owned_conversation(db, conversation_id, current_user)
+    await db.delete(convo)
+    await db.commit()

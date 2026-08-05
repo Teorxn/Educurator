@@ -25,7 +25,7 @@ const STEPS = [
   {
     icon: Upload,
     title: "1. Sube tus documentos",
-    color: "text-violet-600 bg-violet-50",
+    color: "text-brand bg-brand-soft",
     body: [
       "Desde «Subir documento» arrastra uno o varios archivos (PDF, DOCX o TXT, hasta 50 MB cada uno).",
       "Puedes subir hasta 10 documentos a la vez: cada uno se valida por separado, así que un archivo inválido no cancela los demás.",
@@ -35,7 +35,7 @@ const STEPS = [
   {
     icon: Cpu,
     title: "2. El agente procesa el material",
-    color: "text-blue-600 bg-blue-50",
+    color: "text-info-fg bg-info-soft",
     body: [
       "Cada documento pasa por la cola y verás su estado en tiempo real: En cola → Procesando → Analizado.",
       "El agente extrae el texto, lo divide en fragmentos, detecta redundancias y contradicciones, lo contrasta con tus documentos de referencia y genera preguntas frecuentes.",
@@ -45,7 +45,7 @@ const STEPS = [
   {
     icon: CheckSquare,
     title: "3. Revisa y decide",
-    color: "text-green-600 bg-green-50",
+    color: "text-success-fg bg-success-soft",
     body: [
       "En «Revisión» verás cada sugerencia con su nivel de confianza, el razonamiento del agente y la evidencia: los fragmentos exactos del documento que la respaldan.",
       "Apruebas o rechazas cada una. Al rechazar debes indicar el motivo: el agente aprende de esos motivos para mejorar sus próximas sugerencias.",
@@ -55,7 +55,7 @@ const STEPS = [
   {
     icon: MessageSquare,
     title: "4. Pregunta en lenguaje natural",
-    color: "text-amber-600 bg-amber-50",
+    color: "text-warning-fg bg-warning-soft",
     body: [
       "En «Preguntar» puedes hacer preguntas sobre tus documentos y obtener respuestas fundamentadas.",
       "Cada respuesta cita las fuentes: qué documento y qué fragmento la respalda.",
@@ -97,9 +97,9 @@ export default function TutorialModal({ open, onClose }: TutorialModalProps) {
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-      <div className="fixed inset-0 bg-black/40" onClick={close} />
+      <div className="fixed inset-0 bg-black/50 backdrop-blur-[2px]" onClick={close} />
 
-      <div className="relative bg-white rounded-2xl shadow-xl max-w-lg w-full z-10 overflow-hidden">
+      <div className="relative bg-surface border border-line rounded-2xl shadow-[var(--shadow-overlay)] max-w-lg w-full z-10 overflow-hidden">
         {/* Header */}
         <div className="flex items-start justify-between p-5 pb-3">
           <div className="flex items-center gap-3">
@@ -107,17 +107,17 @@ export default function TutorialModal({ open, onClose }: TutorialModalProps) {
               <Icon className="w-5 h-5" />
             </span>
             <div>
-              <h3 className="text-base font-semibold text-gray-900">
+              <h3 className="text-base font-semibold text-ink">
                 {current.title}
               </h3>
-              <p className="text-xs text-gray-400 mt-0.5">
+              <p className="text-xs text-ink-3 mt-0.5">
                 Paso {step + 1} de {STEPS.length}
               </p>
             </div>
           </div>
           <button
             onClick={close}
-            className="p-1 rounded-md text-gray-400 hover:text-gray-600"
+            className="p-1 rounded-md text-ink-3 hover:text-ink-2"
             aria-label="Cerrar tutorial"
           >
             <X className="w-4 h-4" />
@@ -127,14 +127,14 @@ export default function TutorialModal({ open, onClose }: TutorialModalProps) {
         {/* Body */}
         <div className="px-5 pb-4 space-y-2.5">
           {current.body.map((p, i) => (
-            <p key={i} className="text-sm text-gray-600 leading-relaxed">
+            <p key={i} className="text-sm text-ink-2 leading-relaxed">
               {p}
             </p>
           ))}
         </div>
 
         {/* Footer */}
-        <div className="flex items-center justify-between gap-3 px-5 py-4 bg-gray-50 border-t border-gray-100">
+        <div className="flex items-center justify-between gap-3 px-5 py-4 bg-surface-2 border-t border-line">
           <div className="flex items-center gap-1.5">
             {STEPS.map((_, i) => (
               <button
@@ -142,7 +142,7 @@ export default function TutorialModal({ open, onClose }: TutorialModalProps) {
                 onClick={() => setStep(i)}
                 aria-label={`Ir al paso ${i + 1}`}
                 className={`h-1.5 rounded-full transition-all ${
-                  i === step ? "w-5 bg-violet-600" : "w-1.5 bg-gray-300"
+                  i === step ? "w-5 bg-brand" : "w-1.5 bg-line-strong"
                 }`}
               />
             ))}
@@ -152,7 +152,7 @@ export default function TutorialModal({ open, onClose }: TutorialModalProps) {
             {step > 0 && (
               <button
                 onClick={() => setStep((s) => s - 1)}
-                className="flex items-center gap-1 text-sm text-gray-600 hover:text-gray-800 px-3 py-1.5 rounded-lg"
+                className="flex items-center gap-1 text-sm text-ink-2 hover:text-ink px-3 py-1.5 rounded-lg"
               >
                 <ChevronLeft className="w-4 h-4" />
                 Anterior
@@ -161,14 +161,14 @@ export default function TutorialModal({ open, onClose }: TutorialModalProps) {
             {isLast ? (
               <button
                 onClick={close}
-                className="bg-violet-600 hover:bg-violet-700 text-white text-sm font-medium px-4 py-1.5 rounded-lg"
+                className="btn btn-primary"
               >
                 Empezar
               </button>
             ) : (
               <button
                 onClick={() => setStep((s) => s + 1)}
-                className="flex items-center gap-1 bg-violet-600 hover:bg-violet-700 text-white text-sm font-medium px-4 py-1.5 rounded-lg"
+                className="btn btn-primary"
               >
                 Siguiente
                 <ChevronRight className="w-4 h-4" />

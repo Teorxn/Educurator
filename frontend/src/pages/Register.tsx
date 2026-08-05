@@ -1,8 +1,10 @@
 import { useState } from "react";
 import type { FormEvent } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { Loader2, AlertCircle, Plus, X } from "lucide-react";
+import { Loader2, AlertCircle, Plus, X, ArrowRight } from "lucide-react";
 import { register } from "../api/account";
+import AuthLayout from "../layouts/AuthLayout";
+import { clearProfileCache } from "../useProfile";
 
 /** Campo multi-valor: el usuario añade y elimina ítems dinámicamente. */
 function TagInput({
@@ -29,9 +31,9 @@ function TagInput({
 
   return (
     <div>
-      <label className="block text-sm font-medium text-gray-700 mb-1.5">
-        {label} {required && <span className="text-red-500">*</span>}
-      </label>
+      <span className="label">
+        {label} {required && <span className="text-danger-fg">*</span>}
+      </span>
       <div className="flex gap-2">
         <input
           value={draft}
@@ -43,32 +45,29 @@ function TagInput({
             }
           }}
           placeholder={placeholder}
-          className="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-violet-400 focus:border-transparent"
+          className="input"
         />
         <button
           type="button"
           onClick={add}
-          className="px-3 py-2 bg-gray-100 hover:bg-gray-200 rounded-lg text-gray-600"
+          className="btn btn-secondary shrink-0 px-3"
           aria-label={`Añadir a ${label}`}
         >
-          <Plus className="w-4 h-4" />
+          <Plus className="h-4 w-4" />
         </button>
       </div>
       {values.length > 0 && (
-        <div className="flex flex-wrap gap-1.5 mt-2">
+        <div className="mt-2 flex flex-wrap gap-1.5">
           {values.map((v) => (
-            <span
-              key={v}
-              className="inline-flex items-center gap-1 text-xs bg-violet-50 text-violet-700 border border-violet-200 px-2 py-1 rounded-full"
-            >
+            <span key={v} className="chip chip-brand">
               {v}
               <button
                 type="button"
                 onClick={() => onChange(values.filter((x) => x !== v))}
-                className="hover:text-violet-900"
+                className="opacity-60 transition-opacity hover:opacity-100"
                 aria-label={`Quitar ${v}`}
               >
-                <X className="w-3 h-3" />
+                <X className="h-3 w-3" />
               </button>
             </span>
           ))}
@@ -96,8 +95,7 @@ export default function Register() {
     setError("");
 
     // Validación previa al envío (criterio RNF de HU-29)
-    if (fullName.trim().length < 3)
-      return setError("Ingresa tu nombre completo");
+    if (fullName.trim().length < 3) return setError("Ingresa tu nombre completo");
     if (password.length < 8)
       return setError("La contraseña debe tener al menos 8 caracteres");
     if (subjects.length === 0)
@@ -115,11 +113,11 @@ export default function Register() {
         courses_taught: courses,
       });
       localStorage.setItem("access_token", data.access_token);
+      clearProfileCache();
       navigate("/dashboard");
     } catch (err) {
-      const detail =
-        (err as { response?: { data?: { detail?: unknown } } })?.response?.data
-          ?.detail;
+      const detail = (err as { response?: { data?: { detail?: unknown } } })
+        ?.response?.data?.detail;
       setError(
         typeof detail === "string"
           ? detail
@@ -131,133 +129,127 @@ export default function Register() {
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-violet-950 flex items-center justify-center p-4">
-      <div className="w-full max-w-lg my-8">
-        <div className="flex flex-col items-center mb-6">
-          <div className="w-14 h-14 bg-slate-700 rounded-2xl flex items-center justify-center mb-4 shadow-lg shadow-black/40">
-            <img
-              src="/Softserve.png"
-              alt="SoftServe"
-              className="w-9 h-9 object-contain"
+    <AuthLayout
+      title="Crea tu cuenta"
+      subtitle="Tu perfil académico permite al agente personalizar sus recomendaciones."
+      footer={
+        <>
+          ¿Ya tienes cuenta?{" "}
+          <Link
+            to="/login"
+            className="font-semibold text-brand hover:text-brand-hover"
+          >
+            Inicia sesión
+          </Link>
+        </>
+      }
+    >
+      <form onSubmit={handleSubmit} className="space-y-4">
+        <div>
+          <label htmlFor="fullName" className="label">
+            Nombre completo <span className="text-danger-fg">*</span>
+          </label>
+          <input
+            id="fullName"
+            value={fullName}
+            onChange={(e) => setFullName(e.target.value)}
+            required
+            autoComplete="name"
+            className="input"
+          />
+        </div>
+
+        <div className="grid gap-4 sm:grid-cols-2">
+          <div>
+            <label htmlFor="regEmail" className="label">
+              Correo <span className="text-danger-fg">*</span>
+            </label>
+            <input
+              id="regEmail"
+              type="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              required
+              autoComplete="email"
+              className="input"
             />
           </div>
-          <h1 className="text-2xl font-bold text-white tracking-tight">
-            EduCurator AI
-          </h1>
-          <p className="text-slate-400 text-sm mt-1">Registro de docente</p>
-        </div>
-
-        <div className="bg-white rounded-2xl shadow-2xl p-7">
-          <h2 className="text-xl font-semibold text-gray-900 mb-1">
-            Crea tu cuenta
-          </h2>
-          <p className="text-sm text-gray-500 mb-5">
-            Tu perfil académico permite al agente personalizar sus
-            recomendaciones.
-          </p>
-
-          <form onSubmit={handleSubmit} className="space-y-4">
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1.5">
-                Nombre completo <span className="text-red-500">*</span>
-              </label>
-              <input
-                value={fullName}
-                onChange={(e) => setFullName(e.target.value)}
-                required
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-violet-400 focus:border-transparent"
-              />
-            </div>
-
-            <div className="grid sm:grid-cols-2 gap-4">
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1.5">
-                  Correo <span className="text-red-500">*</span>
-                </label>
-                <input
-                  type="email"
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  required
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-violet-400 focus:border-transparent"
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1.5">
-                  Contraseña <span className="text-red-500">*</span>
-                </label>
-                <input
-                  type="password"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  required
-                  minLength={8}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-violet-400 focus:border-transparent"
-                />
-                <p className="text-xs text-gray-400 mt-1">Mínimo 8 caracteres</p>
-              </div>
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1.5">
-                Profesión
-              </label>
-              <input
-                value={profession}
-                onChange={(e) => setProfession(e.target.value)}
-                placeholder="Ej: Ingeniero de sistemas"
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-violet-400 focus:border-transparent"
-              />
-            </div>
-
-            <TagInput
-              label="Materias que impartes"
-              placeholder="Ej: Cálculo diferencial"
+          <div>
+            <label htmlFor="regPassword" className="label">
+              Contraseña <span className="text-danger-fg">*</span>
+            </label>
+            <input
+              id="regPassword"
+              type="password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
               required
-              values={subjects}
-              onChange={setSubjects}
+              minLength={8}
+              autoComplete="new-password"
+              className="input"
             />
-            <TagInput
-              label="Especialidades"
-              placeholder="Ej: Machine learning"
-              values={specialties}
-              onChange={setSpecialties}
-            />
-            <TagInput
-              label="Cursos impartidos"
-              placeholder="Ej: Programación I"
-              values={courses}
-              onChange={setCourses}
-            />
-
-            {error && (
-              <div className="flex items-start gap-2 bg-red-50 border border-red-200 text-red-700 text-sm rounded-xl px-3 py-2.5">
-                <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
-                {error}
-              </div>
-            )}
-
-            <button
-              type="submit"
-              disabled={loading}
-              className="w-full flex items-center justify-center gap-2 bg-violet-600 hover:bg-violet-700 disabled:bg-violet-300 text-white font-medium py-2.5 rounded-xl transition-colors"
-            >
-              {loading && <Loader2 className="w-4 h-4 animate-spin" />}
-              {loading ? "Creando cuenta..." : "Crear cuenta"}
-            </button>
-          </form>
-
-          <p className="text-sm text-gray-500 text-center mt-5">
-            ¿Ya tienes cuenta?{" "}
-            <Link
-              to="/login"
-              className="text-violet-600 hover:text-violet-700 font-medium"
-            >
-              Inicia sesión
-            </Link>
-          </p>
+            <p className="mt-1 text-xs text-ink-3">Mínimo 8 caracteres</p>
+          </div>
         </div>
-      </div>
-    </div>
+
+        <div>
+          <label htmlFor="profession" className="label">
+            Profesión
+          </label>
+          <input
+            id="profession"
+            value={profession}
+            onChange={(e) => setProfession(e.target.value)}
+            placeholder="Ej: Ingeniero de sistemas"
+            className="input"
+          />
+        </div>
+
+        <TagInput
+          label="Materias que impartes"
+          placeholder="Ej: Cálculo diferencial"
+          required
+          values={subjects}
+          onChange={setSubjects}
+        />
+        <TagInput
+          label="Especialidades"
+          placeholder="Ej: Machine learning"
+          values={specialties}
+          onChange={setSpecialties}
+        />
+        <TagInput
+          label="Cursos impartidos"
+          placeholder="Ej: Programación I"
+          values={courses}
+          onChange={setCourses}
+        />
+
+        {error && (
+          <div className="note note-danger" role="alert">
+            <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+            {error}
+          </div>
+        )}
+
+        <button
+          type="submit"
+          disabled={loading}
+          className="btn btn-primary w-full py-2.5"
+        >
+          {loading ? (
+            <>
+              <Loader2 className="h-4 w-4 animate-spin" />
+              Creando cuenta...
+            </>
+          ) : (
+            <>
+              Crear cuenta
+              <ArrowRight className="h-4 w-4" />
+            </>
+          )}
+        </button>
+      </form>
+    </AuthLayout>
   );
 }

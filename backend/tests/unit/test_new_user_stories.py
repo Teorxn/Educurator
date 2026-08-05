@@ -218,6 +218,7 @@ class TestChatGrounding:
         result = MagicMock()
         result.all.return_value = []
         db.execute = AsyncMock(return_value=result)
+        db.commit = AsyncMock()
 
         user = MagicMock(id=uuid.uuid4())
         user.role = "instructor"
@@ -239,6 +240,7 @@ class TestChatGrounding:
         result = MagicMock()
         result.all.return_value = [(doc_id, "curso.pdf")]
         db.execute = AsyncMock(return_value=result)
+        db.commit = AsyncMock()
 
         user = MagicMock(id=uuid.uuid4())
         user.role = "instructor"

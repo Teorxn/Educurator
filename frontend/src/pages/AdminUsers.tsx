@@ -131,7 +131,7 @@ export default function AdminUsers() {
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center h-64 text-gray-400 gap-2">
+      <div className="flex items-center justify-center h-64 text-ink-3 gap-2">
         <Loader2 className="w-5 h-5 animate-spin" />
         <span className="text-sm">Cargando administración...</span>
       </div>
@@ -140,7 +140,7 @@ export default function AdminUsers() {
 
   if (error && users.length === 0) {
     return (
-      <div className="flex items-center gap-2 bg-red-50 border border-red-200 text-red-700 text-sm rounded-xl px-4 py-3">
+      <div className="flex items-center gap-2 bg-danger-soft border border-transparent text-danger-fg text-sm rounded-xl px-4 py-3">
         <AlertCircle className="w-4 h-4 shrink-0" />
         {error}
       </div>
@@ -150,27 +150,27 @@ export default function AdminUsers() {
   return (
     <div className="space-y-5">
       {notice && (
-        <div className="flex items-center gap-2 bg-green-50 border border-green-200 text-green-700 text-sm rounded-xl px-4 py-3">
+        <div className="flex items-center gap-2 bg-success-soft border border-transparent text-success-fg text-sm rounded-xl px-4 py-3">
           <ShieldCheck className="w-4 h-4 shrink-0" />
           {notice}
         </div>
       )}
       {error && (
-        <div className="flex items-center gap-2 bg-red-50 border border-red-200 text-red-700 text-sm rounded-xl px-4 py-3">
+        <div className="flex items-center gap-2 bg-danger-soft border border-transparent text-danger-fg text-sm rounded-xl px-4 py-3">
           <AlertCircle className="w-4 h-4 shrink-0" />
           {error}
         </div>
       )}
 
       {/* Usuarios */}
-      <section className="bg-white rounded-xl border border-gray-200 overflow-hidden">
-        <div className="flex items-center justify-between px-4 py-3 border-b border-gray-100">
-          <h2 className="text-sm font-semibold text-gray-800">
+      <section className="card overflow-hidden">
+        <div className="flex items-center justify-between px-4 py-3 border-b border-line">
+          <h2 className="text-sm font-semibold text-ink">
             Usuarios ({users.length})
           </h2>
           <button
             onClick={toggleAudit}
-            className="flex items-center gap-1.5 text-xs font-medium text-violet-600 hover:text-violet-700"
+            className="flex items-center gap-1.5 text-xs font-medium text-brand hover:text-brand-hover"
           >
             <History className="w-3.5 h-3.5" />
             {showAudit ? "Ocultar" : "Ver"} auditoría de roles
@@ -179,43 +179,43 @@ export default function AdminUsers() {
 
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
-            <thead className="bg-gray-50 border-b border-gray-100">
+            <thead className="bg-surface-2 border-b border-line">
               <tr>
-                <th className="px-4 py-2.5 text-left font-medium text-gray-600">
+                <th className="px-4 py-2.5 text-left font-medium text-ink-2">
                   Usuario
                 </th>
-                <th className="px-4 py-2.5 text-left font-medium text-gray-600">
+                <th className="px-4 py-2.5 text-left font-medium text-ink-2">
                   Profesión
                 </th>
-                <th className="px-4 py-2.5 text-left font-medium text-gray-600">
+                <th className="px-4 py-2.5 text-left font-medium text-ink-2">
                   Estado
                 </th>
-                <th className="px-4 py-2.5 text-left font-medium text-gray-600">
+                <th className="px-4 py-2.5 text-left font-medium text-ink-2">
                   Rol
                 </th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-gray-50">
+            <tbody className="divide-y divide-line">
               {users.map((u) => (
-                <tr key={u.id} className="hover:bg-gray-50 transition-colors">
+                <tr key={u.id} className="hover:bg-surface-2 transition-colors">
                   <td className="px-4 py-3">
-                    <span className="block text-gray-800">
+                    <span className="block text-ink">
                       {u.full_name || "—"}
                     </span>
-                    <span className="block text-xs text-gray-400">
+                    <span className="block text-xs text-ink-3">
                       {u.email}
                     </span>
                   </td>
-                  <td className="px-4 py-3 text-gray-500 text-xs">
+                  <td className="px-4 py-3 text-ink-2 text-xs">
                     {u.profession || "—"}
                   </td>
                   <td className="px-4 py-3">
                     {u.is_active ? (
-                      <span className="text-xs text-green-700 bg-green-50 border border-green-200 px-2 py-0.5 rounded-full">
+                      <span className="text-xs text-success-fg bg-success-soft border border-transparent px-2 py-0.5 rounded-full">
                         Activo
                       </span>
                     ) : (
-                      <span className="inline-flex items-center gap-1 text-xs text-gray-600 bg-gray-100 border border-gray-200 px-2 py-0.5 rounded-full">
+                      <span className="inline-flex items-center gap-1 text-xs text-ink-2 bg-surface-2 border border-line px-2 py-0.5 rounded-full">
                         <UserX className="w-3 h-3" />
                         Inactivo
                       </span>
@@ -224,7 +224,7 @@ export default function AdminUsers() {
                   <td className="px-4 py-3">
                     {u.id === myId ? (
                       <span
-                        className="text-xs text-gray-400"
+                        className="text-xs text-ink-3"
                         title="No puedes modificar tu propio rol"
                       >
                         {u.role} (tú)
@@ -239,7 +239,7 @@ export default function AdminUsers() {
                             role: e.target.value as "instructor" | "admin",
                           })
                         }
-                        className="border border-gray-200 rounded-lg px-2 py-1 text-xs bg-white focus:outline-none focus:ring-2 focus:ring-violet-400"
+                        className="border border-line rounded-lg px-2 py-1 text-xs bg-surface focus:outline-none focus:ring-2 focus:ring-brand"
                       >
                         <option value="instructor">instructor</option>
                         <option value="admin">admin</option>
@@ -255,21 +255,21 @@ export default function AdminUsers() {
 
       {/* Auditoría de cambios de rol */}
       {showAudit && (
-        <section className="bg-white rounded-xl border border-gray-200 p-4">
-          <h2 className="text-sm font-semibold text-gray-800 mb-3">
+        <section className="card p-4">
+          <h2 className="text-sm font-semibold text-ink mb-3">
             Auditoría de cambios de rol
           </h2>
           {audit.length === 0 ? (
-            <p className="text-sm text-gray-400">Sin cambios registrados</p>
+            <p className="text-sm text-ink-3">Sin cambios registrados</p>
           ) : (
             <ul className="space-y-2">
               {audit.map((a) => (
                 <li
                   key={a.id}
-                  className="text-xs text-gray-600 border border-gray-100 rounded-lg px-3 py-2"
+                  className="text-xs text-ink-2 border border-line rounded-lg px-3 py-2"
                 >
                   <span className="block">{a.reason}</span>
-                  <span className="block text-gray-400 mt-0.5">
+                  <span className="block text-ink-3 mt-0.5">
                     {fmtDate(a.timestamp)}
                   </span>
                 </li>
@@ -280,8 +280,8 @@ export default function AdminUsers() {
       )}
 
       {/* Roles */}
-      <section className="bg-white rounded-xl border border-gray-200 p-4">
-        <h2 className="text-sm font-semibold text-gray-800 mb-3">
+      <section className="card p-4">
+        <h2 className="text-sm font-semibold text-ink mb-3">
           Roles del sistema
         </h2>
 
@@ -289,29 +289,29 @@ export default function AdminUsers() {
           {roles.map((r) => (
             <div
               key={r.id}
-              className="flex items-center justify-between gap-3 border border-gray-100 rounded-lg px-3 py-2"
+              className="flex items-center justify-between gap-3 border border-line rounded-lg px-3 py-2"
             >
               <div className="min-w-0">
-                <span className="text-sm text-gray-800">{r.name}</span>
+                <span className="text-sm text-ink">{r.name}</span>
                 {r.is_system && (
-                  <span className="ml-2 text-[11px] text-gray-500 bg-gray-100 px-1.5 py-0.5 rounded-full">
+                  <span className="ml-2 text-[11px] text-ink-2 bg-surface-2 px-1.5 py-0.5 rounded-full">
                     sistema
                   </span>
                 )}
                 {r.description && (
-                  <span className="block text-xs text-gray-400 truncate">
+                  <span className="block text-xs text-ink-3 truncate">
                     {r.description}
                   </span>
                 )}
               </div>
               <div className="flex items-center gap-2 shrink-0">
-                <span className="text-xs text-gray-400">
+                <span className="text-xs text-ink-3">
                   {r.users_count} usuario{r.users_count !== 1 ? "s" : ""}
                 </span>
                 {!r.is_system && (
                   <button
                     onClick={() => handleDeleteRole(r)}
-                    className="text-gray-400 hover:text-red-600"
+                    className="text-ink-3 hover:text-danger-fg"
                     aria-label={`Eliminar rol ${r.name}`}
                   >
                     <Trash2 className="w-3.5 h-3.5" />
@@ -327,12 +327,12 @@ export default function AdminUsers() {
             value={newRole}
             onChange={(e) => setNewRole(e.target.value)}
             placeholder="nombre_del_rol (minúsculas)"
-            className="flex-1 px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-violet-400"
+            className="flex-1 px-3 py-2 border border-line rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-brand"
           />
           <button
             onClick={handleCreateRole}
             disabled={!newRole.trim()}
-            className="flex items-center gap-1.5 bg-violet-600 hover:bg-violet-700 disabled:bg-violet-300 text-white text-sm font-medium px-3 py-2 rounded-lg"
+            className="btn btn-primary"
           >
             <Plus className="w-4 h-4" />
             Crear rol
@@ -344,14 +344,14 @@ export default function AdminUsers() {
       {confirming && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
           <div
-            className="fixed inset-0 bg-black/40"
+            className="fixed inset-0 bg-black/50 backdrop-blur-[2px]"
             onClick={() => setConfirming(null)}
           />
-          <div className="relative bg-white rounded-2xl shadow-xl max-w-sm w-full p-6 space-y-4 z-10">
-            <h3 className="text-base font-semibold text-gray-900">
+          <div className="relative bg-surface border border-line rounded-2xl shadow-[var(--shadow-overlay)] max-w-sm w-full p-6 space-y-4 z-10">
+            <h3 className="text-base font-semibold text-ink">
               Confirmar cambio de rol
             </h3>
-            <p className="text-sm text-gray-600">
+            <p className="text-sm text-ink-2">
               ¿Asignar el rol <strong>{confirming.role}</strong> a{" "}
               <strong>{confirming.email}</strong>? El cambio tiene efecto
               inmediato y queda registrado en la auditoría.
@@ -359,13 +359,13 @@ export default function AdminUsers() {
             <div className="flex justify-end gap-2">
               <button
                 onClick={() => setConfirming(null)}
-                className="px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-lg"
+                className="btn btn-secondary"
               >
                 Cancelar
               </button>
               <button
                 onClick={applyRoleChange}
-                className="px-4 py-2 text-sm font-medium text-white bg-violet-600 hover:bg-violet-700 rounded-lg"
+                className="btn btn-primary"
               >
                 Confirmar
               </button>

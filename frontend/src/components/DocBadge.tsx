@@ -1,23 +1,41 @@
+import {
+  Archive,
+  CheckCircle2,
+  Clock,
+  Cpu,
+  Sparkles,
+  TriangleAlert,
+  XCircle,
+} from 'lucide-react'
+
 interface StyleDef {
-  bg: string
-  text: string
-  dot: string
+  /** Clase de tono del chip (fondo + texto ya emparejados y con contraste verificado). */
+  tone: string
+  icon: typeof Clock
   label: string
+  /** El icono gira mientras el estado sea de trabajo en curso. */
+  spin?: boolean
 }
 
+// El color nunca va solo: cada estado lleva icono + etiqueta, de modo que se
+// distingue sin depender de percibir el matiz.
 const STATUS_MAP: Record<string, StyleDef> = {
-  needs_review: { bg: 'bg-gray-100', text: 'text-gray-700', dot: 'bg-gray-400', label: 'Pendiente' },
-  processing:   { bg: 'bg-yellow-100', text: 'text-yellow-800', dot: 'bg-yellow-400 animate-pulse', label: 'Procesando' },
-  approved:     { bg: 'bg-green-100', text: 'text-green-800', dot: 'bg-green-500', label: 'Aprobado' },
-  rejected:     { bg: 'bg-red-100', text: 'text-red-800', dot: 'bg-red-500', label: 'Rechazado' },
-  archived:     { bg: 'bg-blue-100', text: 'text-blue-800', dot: 'bg-blue-400', label: 'Archivado' },
+  queued: { tone: 'chip-neutral', icon: Clock, label: 'En cola' },
+  processing: { tone: 'chip-info', icon: Cpu, label: 'Procesando', spin: true },
+  analyzed: { tone: 'chip-brand', icon: Sparkles, label: 'Analizado' },
+  error: { tone: 'chip-danger', icon: TriangleAlert, label: 'Error' },
+  needs_review: { tone: 'chip-warning', icon: Clock, label: 'Por revisar' },
+  approved: { tone: 'chip-success', icon: CheckCircle2, label: 'Aprobado' },
+  rejected: { tone: 'chip-danger', icon: XCircle, label: 'Rechazado' },
+  archived: { tone: 'chip-neutral', icon: Archive, label: 'Archivado' },
 }
 
 export default function DocBadge({ status }: { status: string }) {
   const s = STATUS_MAP[status] ?? STATUS_MAP['needs_review']
+  const Icon = s.icon
   return (
-    <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium ${s.bg} ${s.text}`}>
-      <span className={`w-1.5 h-1.5 rounded-full ${s.dot}`} />
+    <span className={`chip ${s.tone}`}>
+      <Icon className={`h-3 w-3 shrink-0 ${s.spin ? 'animate-spin' : ''}`} />
       {s.label}
     </span>
   )

@@ -25,6 +25,7 @@ from app.models.models import (
     TokenUsage,
     User,
 )
+from app.services.access import visible_docs_filter
 
 logger = logging.getLogger(__name__)
 
@@ -37,62 +38,73 @@ router = APIRouter(prefix="/api/analytics", tags=["dashboard"])
 @router.get("/dashboard")
 async def get_dashboard(
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user),
 ):
-    """Resumen del panel de inicio: recientes, pendientes y métricas."""
+    """Resumen del panel de inicio: recientes, pendientes y métricas.
+
+    Acotado a los documentos visibles para el usuario (los suyos + el
+    corpus de referencia; el admin ve todo): de lo contrario el panel
+    enlaza a documentos a los que el docente no tiene acceso.
+    """
+    visibility = visible_docs_filter(current_user)
+
     # Últimos 5 documentos procesados
-    recent_rows = (
-        await db.execute(
-            select(
-                Document.id,
-                Document.filename,
-                Document.status,
-                Document.uploaded_at,
-                func.count(Suggestion.id),
-            )
-            .outerjoin(Suggestion, Suggestion.document_id == Document.id)
-            .group_by(
-                Document.id,
-                Document.filename,
-                Document.status,
-                Document.uploaded_at,
-            )
-            .order_by(Document.uploaded_at.desc())
-            .limit(5)
+    recent_q = (
+        select(
+            Document.id,
+            Document.filename,
+            Document.status,
+            Document.uploaded_at,
+            func.count(Suggestion.id),
         )
-    ).all()
+        .outerjoin(Suggestion, Suggestion.document_id == Document.id)
+        .group_by(
+            Document.id,
+            Document.filename,
+            Document.status,
+            Document.uploaded_at,
+        )
+        .order_by(Document.uploaded_at.desc())
+        .limit(5)
+    )
+    if visibility is not None:
+        recent_q = recent_q.where(visibility)
+    recent_rows = (await db.execute(recent_q)).all()
 
     # Documentos pendientes de revisión, con acceso directo desde el panel
     pending_states = (DocumentStatus.needs_review, DocumentStatus.analyzed)
-    pending_rows = (
-        await db.execute(
-            select(
-                Document.id,
-                Document.filename,
-                Document.status,
-                func.count(Suggestion.id),
-            )
-            .outerjoin(
-                Suggestion,
-                (Suggestion.document_id == Document.id)
-                & (Suggestion.status == SuggestionStatus.pending),
-            )
-            .where(Document.status.in_(pending_states))
-            .group_by(Document.id, Document.filename, Document.status)
-            .order_by(Document.uploaded_at.desc())
-            .limit(10)
+    pending_q = (
+        select(
+            Document.id,
+            Document.filename,
+            Document.status,
+            func.count(Suggestion.id),
         )
-    ).all()
+        .outerjoin(
+            Suggestion,
+            (Suggestion.document_id == Document.id)
+            & (Suggestion.status == SuggestionStatus.pending),
+        )
+        .where(Document.status.in_(pending_states))
+        .group_by(Document.id, Document.filename, Document.status)
+        .order_by(Document.uploaded_at.desc())
+        .limit(10)
+    )
+    if visibility is not None:
+        pending_q = pending_q.where(visibility)
+    pending_rows = (await db.execute(pending_q)).all()
 
     # Métricas generales
-    total_docs = (
-        await db.execute(select(func.count()).select_from(Document))
-    ).scalar_one()
-    sug_rows = (
-        await db.execute(
-            select(Suggestion.status, func.count()).group_by(Suggestion.status)
-        )
-    ).all()
+    total_docs_q = select(func.count()).select_from(Document)
+    if visibility is not None:
+        total_docs_q = total_docs_q.where(visibility)
+    total_docs = (await db.execute(total_docs_q)).scalar_one()
+    sug_q = select(Suggestion.status, func.count()).group_by(Suggestion.status)
+    if visibility is not None:
+        sug_q = sug_q.join(
+            Document, Document.id == Suggestion.document_id
+        ).where(visibility)
+    sug_rows = (await db.execute(sug_q)).all()
     sug_by_status = {r[0].value: r[1] for r in sug_rows}
     total_sug = sum(sug_by_status.values())
     approved = sug_by_status.get("approved", 0)

@@ -686,6 +686,9 @@ class TestSuggestionApprovalAPI:
         mock_doc = MagicMock(spec=Document)
         mock_doc.id = doc_id
         mock_doc.status = DocumentStatus.needs_review
+        # category=reference → visible para cualquier docente autenticado;
+        # este test cubre el flujo de aprobación, no el control de acceso.
+        mock_doc.category = DocumentCategory.reference
 
         return suggestion_id, doc_id, mock_suggestion, mock_doc
 

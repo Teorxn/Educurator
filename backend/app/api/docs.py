@@ -33,6 +33,7 @@ from app.models.models import (
     User,
     UserRole,
 )
+from app.services.access import can_access_doc, visible_docs_filter
 from app.services.curation_queue import enqueue_curation, queue_size
 from app.schemas.docs import (
     BatchUploadError,
@@ -80,10 +81,17 @@ async def list_docs(
     page: int = Query(1, ge=1),
     limit: int = Query(20, ge=1, le=100),
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user),
 ):
     query = select(Document).order_by(Document.uploaded_at.desc())
     count_q = select(func.count()).select_from(Document)
+
+    # Visibilidad: el material curado es privado por docente; el corpus de
+    # referencia es compartido; los administradores ven todo.
+    visibility = visible_docs_filter(current_user)
+    if visibility is not None:
+        query = query.where(visibility)
+        count_q = count_q.where(visibility)
 
     if status_filter:
         try:
@@ -108,7 +116,21 @@ async def list_docs(
         .all()
     )
 
-    items = [DocumentResponse.model_validate(d) for d in docs]
+    uploader_emails: dict = {}
+    uploader_ids = {d.uploaded_by for d in docs if d.uploaded_by}
+    if uploader_ids:
+        rows = (
+            await db.execute(
+                select(User.id, User.email).where(User.id.in_(uploader_ids))
+            )
+        ).all()
+        uploader_emails = {r[0]: r[1] for r in rows}
+
+    items = []
+    for d in docs:
+        item = DocumentResponse.model_validate(d)
+        item.uploader_email = uploader_emails.get(d.uploaded_by)
+        items.append(item)
     return DocsListResponse(items=items, total=total)
 
 
@@ -120,32 +142,34 @@ async def list_docs(
 @router.get("/status/all", response_model=DocsStatusResponse)
 async def get_docs_status(
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user),
 ):
-    """Estados de procesamiento de todos los documentos (polling ligero).
+    """Estados de procesamiento de los documentos accesibles (polling ligero).
 
     `all_final=True` significa que ningún documento sigue en cola o
     procesándose: el frontend puede detener el polling.
     """
-    rows = (
-        await db.execute(
-            select(
-                Document.id,
-                Document.filename,
-                Document.status,
-                Document.error_message,
-                func.count(Suggestion.id),
-            )
-            .outerjoin(Suggestion, Suggestion.document_id == Document.id)
-            .group_by(
-                Document.id,
-                Document.filename,
-                Document.status,
-                Document.error_message,
-            )
-            .order_by(Document.uploaded_at.desc())
+    query = (
+        select(
+            Document.id,
+            Document.filename,
+            Document.status,
+            Document.error_message,
+            func.count(Suggestion.id),
         )
-    ).all()
+        .outerjoin(Suggestion, Suggestion.document_id == Document.id)
+        .group_by(
+            Document.id,
+            Document.filename,
+            Document.status,
+            Document.error_message,
+        )
+        .order_by(Document.uploaded_at.desc())
+    )
+    visibility = visible_docs_filter(current_user)
+    if visibility is not None:
+        query = query.where(visibility)
+    rows = (await db.execute(query)).all()
 
     in_flight = {DocumentStatus.queued, DocumentStatus.processing}
     items = [
@@ -172,13 +196,15 @@ async def get_docs_status(
 async def get_doc(
     doc_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user),
 ):
     doc = (
         await db.execute(select(Document).where(Document.id == doc_id))
     ).scalar_one_or_none()
     if not doc:
         raise HTTPException(status_code=404, detail="Document not found")
+    if not can_access_doc(doc, current_user):
+        raise HTTPException(status_code=403, detail="No tienes acceso a este documento")
     return doc
 
 
@@ -189,13 +215,15 @@ async def get_doc(
 async def get_doc_content(
     doc_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user),
 ):
     doc = (
         await db.execute(select(Document).where(Document.id == doc_id))
     ).scalar_one_or_none()
     if not doc:
         raise HTTPException(status_code=404, detail="Document not found")
+    if not can_access_doc(doc, current_user):
+        raise HTTPException(status_code=403, detail="No tienes acceso a este documento")
 
     # Get chunks ordered by index
     chunks_q = (
@@ -242,7 +270,7 @@ async def get_doc_history(
     page: int = Query(1, ge=1),
     limit: int = Query(20, ge=1, le=100),
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user),
 ):
     # Verify document exists
     doc = (
@@ -250,6 +278,8 @@ async def get_doc_history(
     ).scalar_one_or_none()
     if not doc:
         raise HTTPException(status_code=404, detail="Document not found")
+    if not can_access_doc(doc, current_user):
+        raise HTTPException(status_code=403, detail="No tienes acceso a este documento")
 
     items, total = await get_document_history(db, doc_id, page=page, limit=limit)
     return DocHistoryListResponse(
@@ -273,6 +303,8 @@ async def patch_doc(
     ).scalar_one_or_none()
     if not doc:
         raise HTTPException(status_code=404, detail="Document not found")
+    if not can_access_doc(doc, current_user):
+        raise HTTPException(status_code=403, detail="No tienes acceso a este documento")
 
     # HU-27 — Un documento solo puede aprobarse cuando TODAS sus sugerencias
     # fueron revisadas (aprobadas o rechazadas). Backend = fuente de verdad.
@@ -345,6 +377,8 @@ async def delete_doc(
 
     if not doc:
         raise HTTPException(status_code=404, detail="Document not found")
+    if not can_access_doc(doc, current_user):
+        raise HTTPException(status_code=403, detail="No tienes acceso a este documento")
 
     # Get chroma_ids to delete from vector store
     chunks_result = await db.execute(
@@ -631,7 +665,7 @@ async def download_doc(
 async def get_doc_detail(
     doc_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user),
 ):
     """Metadatos del documento: uploader, tamaño, estado, chunks y sugerencias."""
     doc = (
@@ -639,6 +673,8 @@ async def get_doc_detail(
     ).scalar_one_or_none()
     if not doc:
         raise HTTPException(status_code=404, detail="Documento no encontrado")
+    if not can_access_doc(doc, current_user):
+        raise HTTPException(status_code=403, detail="No tienes acceso a este documento")
 
     uploader_email = None
     if doc.uploaded_by:
@@ -684,7 +720,7 @@ async def get_doc_detail(
 async def retry_doc_analysis(
     doc_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(require_role(UserRole.instructor, UserRole.admin)),
+    current_user: User = Depends(require_role(UserRole.instructor, UserRole.admin)),
     background_tasks: BackgroundTasks = BackgroundTasks(),
 ):
     """Reencola un documento cuyo análisis falló o quedó pendiente."""
@@ -693,6 +729,8 @@ async def retry_doc_analysis(
     ).scalar_one_or_none()
     if not doc:
         raise HTTPException(status_code=404, detail="Documento no encontrado")
+    if not can_access_doc(doc, current_user):
+        raise HTTPException(status_code=403, detail="No tienes acceso a este documento")
     if doc.status in (DocumentStatus.queued, DocumentStatus.processing):
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,

@@ -1,7 +1,6 @@
 import { useEffect, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import {
-  CheckSquare,
   CheckCircle2,
   XCircle,
   AlertCircle,
@@ -11,6 +10,14 @@ import {
   ChevronDown,
   ChevronUp,
   ScrollText,
+  Copy,
+  TriangleAlert,
+  HelpCircle,
+  RefreshCw,
+  BookOpen,
+  Globe,
+  PartyPopper,
+  Inbox,
 } from "lucide-react";
 import {
   getSuggestions,
@@ -21,61 +28,57 @@ import {
 import type { Suggestion, Document } from "../api/docs";
 import SuggestionModal from "../components/SuggestionModal";
 
-const TYPE_LABEL: Record<string, { label: string; color: string }> = {
+/** Presentación por tipo: icono + tono. El color nunca informa por sí solo. */
+const TYPE_UI: Record<
+  string,
+  { label: string; tone: string; icon: typeof Copy; hint: string }
+> = {
   redundancy: {
     label: "Redundancia",
-    color: "bg-amber-100 text-amber-800 border-amber-200",
+    tone: "chip-warning",
+    icon: Copy,
+    hint: "Contenido que se repite en varios lugares",
   },
   conflict: {
     label: "Conflicto",
-    color: "bg-red-100 text-red-800 border-red-200",
+    tone: "chip-danger",
+    icon: TriangleAlert,
+    hint: "Dos fragmentos que se contradicen",
   },
   inconsistency: {
     label: "Inconsistencia",
-    color: "bg-orange-100 text-orange-800 border-orange-200",
+    tone: "chip-warning",
+    icon: TriangleAlert,
+    hint: "Datos que no concuerdan entre sí",
   },
-  faq: { label: "FAQ", color: "bg-blue-100 text-blue-800 border-blue-200" },
+  faq: {
+    label: "FAQ",
+    tone: "chip-info",
+    icon: HelpCircle,
+    hint: "Pregunta frecuente propuesta a partir del material",
+  },
   update: {
     label: "Actualización",
-    color: "bg-purple-100 text-purple-800 border-purple-200",
+    tone: "chip-brand",
+    icon: RefreshCw,
+    hint: "Contenido que podría estar desactualizado",
   },
 };
 
-const STATUS_BADGE: Record<
-  string,
-  { label: string; color: string; dot: string }
-> = {
-  pending: {
-    label: "Pendiente",
-    color: "bg-yellow-50 text-yellow-700 border-yellow-200",
-    dot: "bg-yellow-400",
-  },
-  approved: {
-    label: "Aprobada",
-    color: "bg-green-50 text-green-700 border-green-200",
-    dot: "bg-green-500",
-  },
-  rejected: {
-    label: "Rechazada",
-    color: "bg-red-50 text-red-700 border-red-200",
-    dot: "bg-red-500",
-  },
-};
+const STATUS_TABS = [
+  { value: "pending", label: "Por revisar" },
+  { value: "approved", label: "Aprobadas" },
+  { value: "rejected", label: "Rechazadas" },
+  { value: "", label: "Todas" },
+];
 
 const TYPE_OPTIONS = [
-  { value: "", label: "Todos" },
+  { value: "", label: "Todos los tipos" },
   { value: "redundancy", label: "Redundancia" },
   { value: "conflict", label: "Conflicto" },
   { value: "inconsistency", label: "Inconsistencia" },
   { value: "faq", label: "FAQ" },
   { value: "update", label: "Actualización" },
-];
-
-const STATUS_OPTIONS = [
-  { value: "pending", label: "Pendientes" },
-  { value: "approved", label: "Aprobadas" },
-  { value: "rejected", label: "Rechazadas" },
-  { value: "", label: "Todas" },
 ];
 
 function fmtDate(d: string) {
@@ -85,8 +88,17 @@ function fmtDate(d: string) {
   }).format(new Date(d));
 }
 
-function fmtConfidence(score: number) {
-  return `${(score * 100).toFixed(0)}%`;
+/** Agrupa por documento conservando el orden de llegada. */
+function groupByDocument(items: Suggestion[]) {
+  const groups = new Map<string, { name: string; items: Suggestion[] }>();
+  for (const s of items) {
+    const key = s.document_id;
+    if (!groups.has(key)) {
+      groups.set(key, { name: s.document_name || "Documento sin nombre", items: [] });
+    }
+    groups.get(key)!.items.push(s);
+  }
+  return Array.from(groups.entries()).map(([id, g]) => ({ id, ...g }));
 }
 
 export default function Review() {
@@ -100,20 +112,22 @@ export default function Review() {
     searchParams.get("document_id") ?? searchParams.get("doc_id") ?? "";
   // HU-28: paginación
   const page = Math.max(1, Number(searchParams.get("page") ?? "1") || 1);
-  const pageSize = Math.max(
-    1,
-    Number(searchParams.get("limit") ?? "25") || 25,
-  );
+  const pageSize = Math.max(1, Number(searchParams.get("limit") ?? "25") || 25);
 
   const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
   const [total, setTotal] = useState(0);
+  // Totales globales para la barra de progreso (independientes del filtro).
+  const [pendingTotal, setPendingTotal] = useState(0);
+  const [allTotal, setAllTotal] = useState(0);
   const [loading, setLoading] = useState(true);
   const [documents, setDocuments] = useState<Document[]>([]);
-  const [rejectModal, setRejectModal] = useState<{ id: string; open: boolean }>(
-    { id: "", open: false },
+  const [rejectModal, setRejectModal] = useState<{ id: string; open: boolean }>({
+    id: "",
+    open: false,
+  });
+  const [selectedSuggestion, setSelectedSuggestion] = useState<Suggestion | null>(
+    null,
   );
-  const [selectedSuggestion, setSelectedSuggestion] =
-    useState<Suggestion | null>(null);
   const [rejectReason, setRejectReason] = useState("");
   const [rejecting, setRejecting] = useState(false);
   const [actionLoading, setActionLoading] = useState<
@@ -123,7 +137,7 @@ export default function Review() {
     Record<string, boolean>
   >({});
 
-  // ── Load documents for filter dropdown ──────────────────────────────────
+  // ── Documentos para el selector ─────────────────────────────────────────
   useEffect(() => {
     let cancelled = false;
     getDocs()
@@ -136,17 +150,26 @@ export default function Review() {
     };
   }, []);
 
-  // ── Load suggestions ────────────────────────────────────────────────────
+  // ── Totales globales para el progreso ───────────────────────────────────
+  const refreshTotals = () => {
+    getSuggestions({ status: "pending", limit: 1 })
+      .then(({ data }) => setPendingTotal(data.total))
+      .catch(() => {});
+    getSuggestions({ limit: 1 })
+      .then(({ data }) => setAllTotal(data.total))
+      .catch(() => {});
+  };
+
+  useEffect(refreshTotals, []);
+
+  // ── Sugerencias del filtro activo ───────────────────────────────────────
   useEffect(() => {
     let cancelled = false;
 
     const load = async () => {
       setLoading(true);
       try {
-        const params: Record<string, string | number> = {
-          page,
-          limit: pageSize,
-        };
+        const params: Record<string, string | number> = { page, limit: pageSize };
         if (statusFilter) params.status = statusFilter;
         if (typeFilter) params.type = typeFilter;
         if (docFilter) params.document_id = docFilter;
@@ -168,25 +191,19 @@ export default function Review() {
     };
   }, [statusFilter, typeFilter, docFilter, page, pageSize]);
 
-  // ── Update URL helpers ──────────────────────────────────────────────────
+  // ── Filtros en la URL ───────────────────────────────────────────────────
   const setFilter = (key: string, value: string) => {
     setSearchParams((prev) => {
       const next = new URLSearchParams(prev);
-      if (value) {
-        next.set(key, value);
-      } else {
-        next.delete(key);
-      }
+      if (value) next.set(key, value);
+      else next.delete(key);
       // Cambiar un filtro reinicia la paginación (HU-28)
       if (key !== "page") next.delete("page");
       return next;
     });
   };
 
-  // ── HU-28: paginación ───────────────────────────────────────────────────
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
-  const rangeStart = total === 0 ? 0 : (page - 1) * pageSize + 1;
-  const rangeEnd = Math.min(page * pageSize, total);
 
   const goToPage = (p: number) => {
     const target = Math.min(Math.max(1, p), totalPages);
@@ -197,50 +214,20 @@ export default function Review() {
     });
   };
 
-  const setPageSize = (size: number) => {
-    setSearchParams((prev) => {
-      const next = new URLSearchParams(prev);
-      next.set("limit", String(size));
-      next.delete("page"); // volver a la primera página
-      return next;
-    });
-  };
-
-  /** Números de página a mostrar, con elipsis cuando hay muchas. */
-  const pageNumbers = (): (number | "…")[] => {
-    if (totalPages <= 7) {
-      return Array.from({ length: totalPages }, (_, i) => i + 1);
-    }
-    const items: (number | "…")[] = [1];
-    const from = Math.max(2, page - 1);
-    const to = Math.min(totalPages - 1, page + 1);
-    if (from > 2) items.push("…");
-    for (let i = from; i <= to; i++) items.push(i);
-    if (to < totalPages - 1) items.push("…");
-    items.push(totalPages);
-    return items;
-  };
-
-  // ── Actions ─────────────────────────────────────────────────────────────
+  // ── Acciones ────────────────────────────────────────────────────────────
   const handleApprove = async (id: string) => {
     setActionLoading((p) => ({ ...p, [id]: "approve" }));
     try {
       await approveSuggestion(id);
       setSuggestions((prev) =>
-        prev.map((s) =>
-          s.id === id ? { ...s, status: "approved" as const } : s,
-        ),
+        prev.map((s) => (s.id === id ? { ...s, status: "approved" as const } : s)),
       );
+      refreshTotals();
     } catch {
       // silent
     } finally {
       setActionLoading((p) => ({ ...p, [id]: null }));
     }
-  };
-
-  const openRejectModal = (id: string) => {
-    setRejectModal({ id, open: true });
-    setRejectReason("");
   };
 
   const handleReject = async () => {
@@ -258,6 +245,7 @@ export default function Review() {
       );
       setRejectModal({ id: "", open: false });
       setRejectReason("");
+      refreshTotals();
     } catch {
       // silent
     } finally {
@@ -265,35 +253,63 @@ export default function Review() {
     }
   };
 
-  // ── Loading state ───────────────────────────────────────────────────────
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center h-64 text-gray-400 gap-2">
-        <Loader2 className="w-5 h-5 animate-spin" />
-        <span className="text-sm">Cargando sugerencias...</span>
-      </div>
-    );
-  }
-
-  const pendingCount = suggestions.filter((s) => s.status === "pending").length;
+  const reviewed = Math.max(0, allTotal - pendingTotal);
+  const progress = allTotal > 0 ? Math.round((reviewed / allTotal) * 100) : 0;
+  const groups = groupByDocument(suggestions);
 
   return (
-    <div className="space-y-4">
-      {/* ── Filters ──────────────────────────────────────────────────── */}
-      <div className="flex flex-wrap items-center gap-3">
-        {/* Status filter */}
-        <div className="flex items-center gap-1.5">
-          <span className="text-xs font-medium text-gray-500 mr-1">
-            Estado:
-          </span>
-          {STATUS_OPTIONS.map((opt) => (
+    <div className="mx-auto max-w-5xl space-y-4">
+      {/* ── Progreso: responde "¿cuánto me queda?" de un vistazo ──────────── */}
+      <section className="card p-4">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h2 className="font-display text-lg font-semibold text-ink">
+              {pendingTotal === 0
+                ? "No tienes nada pendiente"
+                : `${pendingTotal} sugerencia${pendingTotal !== 1 ? "s" : ""} por revisar`}
+            </h2>
+            <p className="mt-0.5 text-sm text-ink-2">
+              {pendingTotal === 0
+                ? "El agente no ha propuesto cambios nuevos."
+                : "Aprueba lo que sea correcto y rechaza lo demás indicando por qué."}
+            </p>
+          </div>
+          <div className="text-right">
+            <p className="tnum text-2xl leading-none font-semibold text-ink">
+              {progress}%
+            </p>
+            <p className="mt-1 text-xs text-ink-3">
+              {reviewed} de {allTotal} revisadas
+            </p>
+          </div>
+        </div>
+        <div className="mt-3 h-2 overflow-hidden rounded-full bg-chart-track">
+          <div
+            className="h-2 rounded-full bg-chart transition-[width] duration-500"
+            style={{ width: `${progress}%` }}
+            role="img"
+            aria-label={`${reviewed} de ${allTotal} sugerencias revisadas`}
+          />
+        </div>
+      </section>
+
+      {/* ── Filtros: 1 grupo de pestañas + 2 selectores ───────────────────── */}
+      <div className="flex flex-wrap items-center gap-2">
+        <div
+          role="tablist"
+          aria-label="Estado de la sugerencia"
+          className="flex items-center gap-1 rounded-full border border-line bg-surface-2 p-1"
+        >
+          {STATUS_TABS.map((opt) => (
             <button
               key={opt.value}
+              role="tab"
+              aria-selected={statusFilter === opt.value}
               onClick={() => setFilter("status", opt.value)}
-              className={`text-xs font-medium px-3 py-1.5 rounded-full border transition-colors ${
+              className={`rounded-full px-3 py-1.5 text-xs font-semibold transition-colors ${
                 statusFilter === opt.value
-                  ? "bg-violet-600 text-white border-violet-600"
-                  : "bg-white text-gray-600 border-gray-200 hover:border-violet-300"
+                  ? "bg-surface text-ink shadow-sm"
+                  : "text-ink-2 hover:text-ink"
               }`}
             >
               {opt.label}
@@ -301,391 +317,305 @@ export default function Review() {
           ))}
         </div>
 
-        <div className="w-px h-6 bg-gray-200" />
-
-        {/* Type filter */}
-        <div className="flex items-center gap-1.5">
-          <span className="text-xs font-medium text-gray-500 mr-1">Tipo:</span>
-          {TYPE_OPTIONS.map((opt) => (
-            <button
-              key={opt.value}
-              onClick={() => setFilter("type", opt.value)}
-              className={`text-xs font-medium px-3 py-1.5 rounded-full border transition-colors ${
-                typeFilter === opt.value
-                  ? "bg-violet-600 text-white border-violet-600"
-                  : "bg-white text-gray-600 border-gray-200 hover:border-violet-300"
-              }`}
-            >
-              {opt.label}
-            </button>
+        <select
+          value={typeFilter}
+          onChange={(e) => setFilter("type", e.target.value)}
+          aria-label="Filtrar por tipo"
+          className="input w-auto py-1.5 text-xs"
+        >
+          {TYPE_OPTIONS.map((o) => (
+            <option key={o.value} value={o.value}>
+              {o.label}
+            </option>
           ))}
-        </div>
+        </select>
 
-        <div className="w-px h-6 bg-gray-200" />
+        <select
+          value={docFilter}
+          onChange={(e) => setFilter("doc_id", e.target.value)}
+          aria-label="Filtrar por documento"
+          className="input w-auto max-w-[16rem] py-1.5 text-xs"
+        >
+          <option value="">Todos los documentos</option>
+          {documents.map((doc) => (
+            <option key={doc.id} value={doc.id}>
+              {doc.filename}
+            </option>
+          ))}
+        </select>
 
-        {/* Document filter */}
-        <div className="flex items-center gap-1.5">
-          <span className="text-xs font-medium text-gray-500 mr-1">
-            Documento:
-          </span>
-          <select
-            value={docFilter}
-            onChange={(e) => setFilter("doc_id", e.target.value)}
-            className="text-xs border border-gray-200 rounded-lg px-2.5 py-1.5 bg-white text-gray-700 focus:outline-none focus:ring-2 focus:ring-violet-400 focus:border-transparent"
-          >
-            <option value="">Todos los documentos</option>
-            {documents.map((doc) => (
-              <option key={doc.id} value={doc.id}>
-                {doc.filename}
-              </option>
-            ))}
-          </select>
-        </div>
-
-        {/* Count — HU-28: rango visible sobre el total */}
-        <p className="text-sm text-gray-500 ml-auto">
-          {total > 0 ? (
-            <>
-              Mostrando {rangeStart}–{rangeEnd} de {total} sugerencia
-              {total !== 1 ? "s" : ""}
-            </>
-          ) : (
-            "0 sugerencias"
-          )}
-          {pendingCount > 0 && (
-            <span className="text-yellow-600 ml-1">
-              ({pendingCount} pendientes en esta página)
-            </span>
-          )}
-        </p>
+        <span className="ml-auto text-xs text-ink-3">
+          {total} resultado{total !== 1 ? "s" : ""}
+        </span>
       </div>
 
-      {/* ── Empty state ──────────────────────────────────────────────── */}
-      {suggestions.length === 0 ? (
-        <div className="flex flex-col items-center justify-center h-64 text-center">
-          <div className="w-14 h-14 bg-gray-100 rounded-2xl flex items-center justify-center mb-4">
-            <CheckSquare className="w-7 h-7 text-gray-400" />
-          </div>
-          <p className="text-gray-600 font-medium">No hay sugerencias</p>
-          <p className="text-sm text-gray-400 mt-1">
-            No hay sugerencias con los filtros seleccionados
+      {/* ── Contenido ─────────────────────────────────────────────────────── */}
+      {loading ? (
+        <div className="flex h-64 items-center justify-center gap-2 text-ink-3">
+          <Loader2 className="h-5 w-5 animate-spin" />
+          <span className="text-sm">Cargando sugerencias...</span>
+        </div>
+      ) : suggestions.length === 0 ? (
+        <div className="card flex flex-col items-center justify-center px-4 py-16 text-center">
+          <span className="mb-3 flex h-12 w-12 items-center justify-center rounded-2xl bg-success-soft">
+            {statusFilter === "pending" ? (
+              <PartyPopper className="h-6 w-6 text-success-fg" />
+            ) : (
+              <Inbox className="h-6 w-6 text-ink-3" />
+            )}
+          </span>
+          <p className="font-medium text-ink">
+            {statusFilter === "pending"
+              ? "Todo revisado"
+              : "No hay sugerencias que mostrar"}
+          </p>
+          <p className="mt-1 max-w-sm text-sm text-ink-2">
+            {statusFilter === "pending"
+              ? "No queda nada pendiente con estos filtros. El agente avisará cuando proponga algo nuevo."
+              : "Prueba con otro estado, tipo o documento."}
           </p>
         </div>
       ) : (
-        /* ── Suggestions list ──────────────────────────────────────────── */
-        <div className="space-y-3">
-          {suggestions.map((s) => {
-            const typeStyle = TYPE_LABEL[s.type] ?? TYPE_LABEL.redundancy;
-            const statusStyle = STATUS_BADGE[s.status] ?? STATUS_BADGE.pending;
-            const loading_action = actionLoading[s.id];
-
+        <div className="space-y-5">
+          {groups.map((group) => {
+            const groupPending = group.items.filter(
+              (s) => s.status === "pending",
+            ).length;
             return (
-              <div
-                key={s.id}
-                className={`bg-white rounded-xl border p-4 transition-colors ${
-                  s.status === "pending"
-                    ? "border-gray-200 hover:border-violet-200"
-                    : "border-gray-100"
-                }`}
-              >
-                <div className="flex items-start justify-between gap-4">
-                  <div className="flex-1 min-w-0">
-                    {/* Header row */}
-                    <div className="flex items-center gap-2 mb-2 flex-wrap">
-                      <span
-                        className={`text-xs font-semibold px-2 py-0.5 rounded-full border ${typeStyle.color}`}
+              <section key={group.id}>
+                {/* Cabecera de documento: agrupar da contexto — "estas N son
+                    del mismo material" — en vez de una lista plana. */}
+                <div className="mb-2 flex items-center gap-2 px-1">
+                  <FileText className="h-4 w-4 shrink-0 text-ink-3" />
+                  <h3 className="min-w-0 truncate text-sm font-semibold text-ink">
+                    {group.name}
+                  </h3>
+                  {groupPending > 0 && (
+                    <span className="chip chip-warning shrink-0">
+                      {groupPending} por revisar
+                    </span>
+                  )}
+                  <a
+                    href={`/docs/${group.id}`}
+                    className="ml-auto shrink-0 text-xs font-semibold text-brand hover:text-brand-hover"
+                  >
+                    Ver documento
+                  </a>
+                </div>
+
+                <div className="space-y-2">
+                  {group.items.map((s) => {
+                    const type = TYPE_UI[s.type] ?? TYPE_UI.redundancy;
+                    const TypeIcon = type.icon;
+                    const busy = actionLoading[s.id];
+                    const isPending = s.status === "pending";
+
+                    return (
+                      <article
+                        key={s.id}
+                        className={`card p-4 transition-colors ${
+                          isPending ? "" : "opacity-75"
+                        }`}
                       >
-                        {typeStyle.label}
-                      </span>
-                      {/* Severity badge for conflict/inconsistency types */}
-                      {(s.type === "conflict" || s.type === "inconsistency") &&
-                        s.confidence_score != null && (
-                          <span
-                            className={`inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full border ${
-                              s.confidence_score >= 0.8
-                                ? "bg-red-100 text-red-700 border-red-200"
-                                : s.confidence_score >= 0.6
-                                  ? "bg-yellow-100 text-yellow-700 border-yellow-200"
-                                  : "bg-gray-100 text-gray-600 border-gray-200"
-                            }`}
-                          >
-                            {s.confidence_score >= 0.8
-                              ? "🔴 Alta"
-                              : s.confidence_score >= 0.6
-                                ? "🟡 Media"
-                                : "⚪ Baja"}
+                        {/* Meta compacta: tipo + señales, sin emoji */}
+                        <div className="mb-2 flex flex-wrap items-center gap-1.5">
+                          <span className={`chip ${type.tone}`} title={type.hint}>
+                            <TypeIcon className="h-3 w-3" />
+                            {type.label}
                           </span>
-                        )}
-                      <span
-                        className={`inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full border ${statusStyle.color}`}
-                      >
-                        <span
-                          className={`w-1.5 h-1.5 rounded-full ${statusStyle.dot}`}
-                        />
-                        {statusStyle.label}
-                      </span>
-                      {s.document_name && (
-                        <span className="flex items-center gap-1 text-xs text-gray-400">
-                          <FileText className="w-3 h-3" />
-                          {s.document_name}
-                        </span>
-                      )}
-                      {s.source_type === "reference" && (
-                        <span
-                          className="inline-flex items-center gap-1 text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-800 cursor-help"
-                          title="Esta sugerencia usa un documento de referencia como fuente"
-                        >
-                          📚 Fuente: Referencia
-                        </span>
-                      )}
-                      {s.source_web_url && (
-                        <a
-                          href={s.source_web_url}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="inline-flex items-center gap-1 text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-sky-100 text-sky-800 hover:bg-sky-200 transition-colors"
-                          title="Esta sugerencia se apoya en una fuente web"
-                        >
-                          🌐 Fuente Web
-                        </a>
-                      )}
-                      <span className="text-xs text-gray-400">
-                        {fmtDate(s.created_at)}
-                      </span>
-                    </div>
 
-                    {/* Description — clickable to open modal */}
-                    <button
-                      onClick={() => setSelectedSuggestion(s)}
-                      className="text-left w-full"
-                    >
-                      <p className="text-sm text-gray-800 leading-relaxed">
-                        {s.description}
-                      </p>
-                    </button>
+                          {!isPending && (
+                            <span
+                              className={`chip ${
+                                s.status === "approved"
+                                  ? "chip-success"
+                                  : "chip-danger"
+                              }`}
+                            >
+                              {s.status === "approved" ? (
+                                <CheckCircle2 className="h-3 w-3" />
+                              ) : (
+                                <XCircle className="h-3 w-3" />
+                              )}
+                              {s.status === "approved" ? "Aprobada" : "Rechazada"}
+                            </span>
+                          )}
 
-                    {/* Confidence + Reasoning */}
-                    <div className="flex items-center gap-3 mt-2">
-                      <span className="text-xs font-medium text-violet-600 bg-violet-50 px-2 py-0.5 rounded-full">
-                        Confianza: {fmtConfidence(s.confidence_score)}
-                      </span>
-                      {s.reasoning && (
+                          {s.source_type === "reference" && (
+                            <span
+                              className="chip chip-neutral"
+                              title="Contrastada con un documento de referencia"
+                            >
+                              <BookOpen className="h-3 w-3" />
+                              Referencia
+                            </span>
+                          )}
+
+                          {s.source_web_url && (
+                            <a
+                              href={s.source_web_url}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="chip chip-info hover:brightness-95"
+                              title="Apoyada en una fuente web"
+                            >
+                              <Globe className="h-3 w-3" />
+                              Fuente web
+                            </a>
+                          )}
+
+                          <span className="ml-auto text-xs text-ink-3">
+                            Confianza {Math.round(s.confidence_score * 100)}%
+                          </span>
+                        </div>
+
+                        {/* Propuesta */}
                         <button
                           onClick={() => setSelectedSuggestion(s)}
-                          className="flex items-center gap-1 text-xs text-gray-400 hover:text-violet-600 underline decoration-dotted"
+                          className="w-full text-left"
                         >
-                          <span>Ver razonamiento completo</span>
+                          <p className="text-sm leading-relaxed text-ink">
+                            {s.description}
+                          </p>
                         </button>
-                      )}
-                      {/* Botón Ver contexto completo para inconsistencias */}
-                      {(s.type === "conflict" || s.type === "inconsistency") &&
-                        s.source_chunks &&
-                        s.source_chunks.length > 0 && (
-                          <a
-                            href={`/docs/${s.document_id}`}
-                            className="flex items-center gap-1 text-xs text-gray-400 hover:text-blue-600 underline decoration-dotted"
+
+                        <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-ink-3">
+                          <span>{fmtDate(s.created_at)}</span>
+                          <button
+                            onClick={() => setSelectedSuggestion(s)}
+                            className="font-medium text-brand hover:text-brand-hover"
                           >
-                            <FileText className="w-3 h-3" />
-                            <span>Ver contexto completo</span>
-                          </a>
-                        )}
-                    </div>
-
-                    {/* Evidence */}
-                    {s.source_chunks && s.source_chunks.length > 0 && (
-                      <div className="mt-3">
-                        <button
-                          onClick={() =>
-                            setExpandedEvidence((prev) => ({
-                              ...prev,
-                              [s.id]: !prev[s.id],
-                            }))
-                          }
-                          className="flex items-center gap-1.5 text-xs font-medium text-violet-600 hover:text-violet-700 transition-colors"
-                        >
-                          <ScrollText className="w-3.5 h-3.5" />
-                          {expandedEvidence[s.id]
-                            ? "Ocultar evidencia"
-                            : `Ver evidencia (${s.source_chunks.length} chunk${s.source_chunks.length !== 1 ? "s" : ""})`}
-                          {expandedEvidence[s.id] ? (
-                            <ChevronUp className="w-3 h-3" />
-                          ) : (
-                            <ChevronDown className="w-3 h-3" />
+                            Ver detalle
+                          </button>
+                          {s.source_chunks && s.source_chunks.length > 0 && (
+                            <button
+                              onClick={() =>
+                                setExpandedEvidence((prev) => ({
+                                  ...prev,
+                                  [s.id]: !prev[s.id],
+                                }))
+                              }
+                              className="flex items-center gap-1 font-medium text-brand hover:text-brand-hover"
+                            >
+                              <ScrollText className="h-3 w-3" />
+                              {expandedEvidence[s.id] ? "Ocultar" : "Ver"} evidencia
+                              {expandedEvidence[s.id] ? (
+                                <ChevronUp className="h-3 w-3" />
+                              ) : (
+                                <ChevronDown className="h-3 w-3" />
+                              )}
+                            </button>
                           )}
-                        </button>
+                        </div>
 
-                        {expandedEvidence[s.id] && (
-                          <div className="mt-2 space-y-2">
+                        {/* Evidencia, plegada por defecto */}
+                        {expandedEvidence[s.id] && s.source_chunks && (
+                          <div className="mt-2.5 space-y-2">
                             {s.source_chunks.map((chunk) => (
                               <div
                                 key={chunk.chunk_id}
-                                className="bg-gray-50 border border-gray-200 rounded-lg p-3"
+                                className="rounded-field border border-line bg-surface-2 p-3"
                               >
-                                <div className="flex items-center justify-between mb-1.5">
-                                  <span className="text-xs font-medium text-gray-500">
-                                    Chunk #{chunk.chunk_index}
+                                <div className="mb-1.5 flex items-center justify-between gap-2">
+                                  <span className="text-xs font-medium text-ink-2">
+                                    Fragmento #{chunk.chunk_index}
                                   </span>
-                                  <span className="text-xs text-gray-400">
+                                  <span className="tnum text-xs text-ink-3">
                                     {chunk.token_count} tokens
                                     {chunk.page_number != null &&
                                       ` · pág. ${chunk.page_number}`}
                                   </span>
                                 </div>
-                                <pre className="text-xs text-gray-700 leading-relaxed whitespace-pre-wrap font-sans">
+                                <p className="text-xs leading-relaxed whitespace-pre-wrap text-ink-2">
                                   {chunk.content}
-                                </pre>
+                                </p>
                               </div>
                             ))}
                           </div>
                         )}
-                      </div>
-                    )}
 
-                    {/* Rejection reason */}
-                    {s.status === "rejected" && s.review_reason && (
-                      <div className="flex items-start gap-1.5 mt-2 text-xs text-red-600 bg-red-50 rounded-lg px-3 py-2">
-                        <AlertCircle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
-                        <span>{s.review_reason}</span>
-                      </div>
-                    )}
-                  </div>
+                        {/* Motivo del rechazo */}
+                        {s.status === "rejected" && s.review_reason && (
+                          <div className="note note-danger mt-2.5 text-xs">
+                            <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                            <span>{s.review_reason}</span>
+                          </div>
+                        )}
 
-                  {/* Actions */}
-                  {s.status === "pending" && (
-                    <div className="flex items-center gap-1.5 shrink-0">
-                      {loading_action === "approve" ? (
-                        <span className="w-8 h-8 flex items-center justify-center">
-                          <Loader2 className="w-4 h-4 animate-spin text-violet-600" />
-                        </span>
-                      ) : (
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            handleApprove(s.id);
-                          }}
-                          className="w-8 h-8 flex items-center justify-center rounded-lg bg-green-50 text-green-600 hover:bg-green-100 transition-colors"
-                          title="Aprobar"
-                        >
-                          <CheckCircle2 className="w-4 h-4" />
-                        </button>
-                      )}
-                      {loading_action === "reject" ? (
-                        <span className="w-8 h-8 flex items-center justify-center">
-                          <Loader2 className="w-4 h-4 animate-spin text-red-600" />
-                        </span>
-                      ) : (
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            openRejectModal(s.id);
-                          }}
-                          className="w-8 h-8 flex items-center justify-center rounded-lg bg-red-50 text-red-600 hover:bg-red-100 transition-colors"
-                          title="Rechazar"
-                        >
-                          <XCircle className="w-4 h-4" />
-                        </button>
-                      )}
-                    </div>
-                  )}
-                  {/* HU-26 — quién revisó y cuándo */}
-                  {s.status !== "pending" && (
-                    <div className="shrink-0 text-right">
-                      {s.status === "approved" ? (
-                        <span className="flex items-center justify-end gap-1 text-xs text-green-600">
-                          <CheckCircle2 className="w-3.5 h-3.5" />
-                          Aprobada
-                        </span>
-                      ) : (
-                        <span className="flex items-center justify-end gap-1 text-xs text-red-600">
-                          <XCircle className="w-3.5 h-3.5" />
-                          Rechazada
-                        </span>
-                      )}
-                      {(s.reviewed_by_name || s.reviewed_by_email) && (
-                        <span
-                          className="block text-[11px] text-gray-400 mt-0.5 max-w-[10rem] truncate"
-                          title={s.reviewed_by_email ?? undefined}
-                        >
-                          por {s.reviewed_by_name || s.reviewed_by_email}
-                        </span>
-                      )}
-                      {s.reviewed_at && (
-                        <span className="block text-[11px] text-gray-400">
-                          {fmtDate(s.reviewed_at)}
-                        </span>
-                      )}
-                    </div>
-                  )}
+                        {/* Acciones: son la tarea principal, así que van con
+                            etiqueta y tamaño completo, no como iconos sueltos. */}
+                        {isPending ? (
+                          <div className="mt-3 flex items-center gap-2 border-t border-line pt-3">
+                            <button
+                              onClick={() => handleApprove(s.id)}
+                              disabled={!!busy}
+                              className="btn btn-success btn-sm"
+                            >
+                              {busy === "approve" ? (
+                                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                              ) : (
+                                <CheckCircle2 className="h-3.5 w-3.5" />
+                              )}
+                              Aprobar
+                            </button>
+                            <button
+                              onClick={() => {
+                                setRejectModal({ id: s.id, open: true });
+                                setRejectReason("");
+                              }}
+                              disabled={!!busy}
+                              className="btn btn-secondary btn-sm"
+                            >
+                              <XCircle className="h-3.5 w-3.5" />
+                              Rechazar
+                            </button>
+                          </div>
+                        ) : (
+                          (s.reviewed_by_name ||
+                            s.reviewed_by_email ||
+                            s.reviewed_at) && (
+                            <p className="mt-2.5 border-t border-line pt-2.5 text-xs text-ink-3">
+                              Revisada
+                              {(s.reviewed_by_name || s.reviewed_by_email) &&
+                                ` por ${s.reviewed_by_name || s.reviewed_by_email}`}
+                              {s.reviewed_at && ` · ${fmtDate(s.reviewed_at)}`}
+                            </p>
+                          )
+                        )}
+                      </article>
+                    );
+                  })}
                 </div>
-              </div>
+              </section>
             );
           })}
         </div>
       )}
 
-      {/* ── HU-28: controles de paginación ───────────────────────────────── */}
-      {total > 0 && (
-        <div className="flex items-center justify-between gap-3 flex-wrap pt-1">
-          <label className="flex items-center gap-2 text-xs text-gray-500">
-            Mostrar
-            <select
-              value={pageSize}
-              onChange={(e) => setPageSize(Number(e.target.value))}
-              className="border border-gray-200 rounded-lg px-2 py-1 text-xs bg-white focus:outline-none focus:ring-2 focus:ring-violet-400"
-            >
-              {[10, 25, 50].map((n) => (
-                <option key={n} value={n}>
-                  {n}
-                </option>
-              ))}
-            </select>
-            por página
-          </label>
-
-          {totalPages > 1 && (
-            <div className="flex items-center gap-1">
-              <button
-                onClick={() => goToPage(page - 1)}
-                disabled={page <= 1}
-                className="px-2.5 py-1.5 text-xs font-medium rounded-lg border border-gray-200 bg-white text-gray-600 hover:border-violet-300 disabled:opacity-40 disabled:hover:border-gray-200"
-              >
-                Anterior
-              </button>
-
-              {pageNumbers().map((p, i) =>
-                p === "…" ? (
-                  <span key={`gap-${i}`} className="px-1.5 text-xs text-gray-400">
-                    …
-                  </span>
-                ) : (
-                  <button
-                    key={p}
-                    onClick={() => goToPage(p)}
-                    aria-current={p === page ? "page" : undefined}
-                    className={`min-w-[2rem] px-2 py-1.5 text-xs font-medium rounded-lg border transition-colors ${
-                      p === page
-                        ? "bg-violet-600 text-white border-violet-600"
-                        : "bg-white text-gray-600 border-gray-200 hover:border-violet-300"
-                    }`}
-                  >
-                    {p}
-                  </button>
-                ),
-              )}
-
-              <button
-                onClick={() => goToPage(page + 1)}
-                disabled={page >= totalPages}
-                className="px-2.5 py-1.5 text-xs font-medium rounded-lg border border-gray-200 bg-white text-gray-600 hover:border-violet-300 disabled:opacity-40 disabled:hover:border-gray-200"
-              >
-                Siguiente
-              </button>
-            </div>
-          )}
+      {/* ── HU-28: paginación ─────────────────────────────────────────────── */}
+      {totalPages > 1 && (
+        <div className="flex items-center justify-center gap-2 pt-1">
+          <button
+            onClick={() => goToPage(page - 1)}
+            disabled={page <= 1}
+            className="btn btn-secondary btn-sm"
+          >
+            Anterior
+          </button>
+          <span className="tnum px-2 text-xs text-ink-2">
+            Página {page} de {totalPages}
+          </span>
+          <button
+            onClick={() => goToPage(page + 1)}
+            disabled={page >= totalPages}
+            className="btn btn-secondary btn-sm"
+          >
+            Siguiente
+          </button>
         </div>
       )}
 
-      {/* ── Suggestion detail modal ───────────────────────────────────── */}
+      {/* ── Detalle ───────────────────────────────────────────────────────── */}
       {selectedSuggestion && (
         <SuggestionModal
           suggestion={selectedSuggestion}
@@ -693,49 +623,52 @@ export default function Review() {
         />
       )}
 
-      {/* ── Reject modal ─────────────────────────────────────────────── */}
+      {/* ── Rechazo ───────────────────────────────────────────────────────── */}
       {rejectModal.open && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
           <div
-            className="fixed inset-0 bg-black/40"
+            className="fixed inset-0 bg-black/50 backdrop-blur-[2px]"
             onClick={() => setRejectModal({ id: "", open: false })}
           />
-          <div className="relative bg-white rounded-2xl shadow-xl max-w-md w-full p-6 space-y-4 z-10">
+          <div className="relative z-10 w-full max-w-md space-y-4 rounded-2xl border border-line bg-surface p-6 shadow-[var(--shadow-overlay)]">
             <div className="flex items-center justify-between">
-              <h3 className="text-lg font-semibold text-gray-900">
+              <h3 className="font-display text-lg font-semibold text-ink">
                 Rechazar sugerencia
               </h3>
               <button
                 onClick={() => setRejectModal({ id: "", open: false })}
-                className="p-1 rounded-md text-gray-400 hover:text-gray-600"
+                className="btn-icon h-8 w-8"
+                aria-label="Cerrar"
               >
-                <X className="w-4 h-4" />
+                <X className="h-4 w-4" />
               </button>
             </div>
-            <p className="text-sm text-gray-600">
-              Indica el motivo del rechazo:
+            <p className="text-sm text-ink-2">
+              El motivo queda registrado y ayuda al agente a no repetir el mismo
+              tipo de propuesta.
             </p>
             <textarea
               value={rejectReason}
               onChange={(e) => setRejectReason(e.target.value)}
               rows={3}
               autoFocus
-              placeholder="Ej: Esta sugerencia no es relevante para el contenido del curso..."
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-red-400 focus:border-transparent resize-none"
+              aria-label="Motivo del rechazo"
+              placeholder="Ej: no es relevante para el contenido del curso..."
+              className="input resize-none"
             />
             <div className="flex justify-end gap-2">
               <button
                 onClick={() => setRejectModal({ id: "", open: false })}
-                className="px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors"
+                className="btn btn-secondary"
               >
                 Cancelar
               </button>
               <button
                 onClick={handleReject}
                 disabled={!rejectReason.trim() || rejecting}
-                className="px-4 py-2 text-sm font-medium text-white bg-red-600 hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed rounded-lg transition-colors flex items-center gap-2"
+                className="btn btn-danger"
               >
-                {rejecting && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+                {rejecting && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
                 {rejecting ? "Rechazando..." : "Rechazar"}
               </button>
             </div>

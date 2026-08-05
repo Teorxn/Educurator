@@ -1,18 +1,476 @@
 @import "tailwindcss";
 
-*,
-*::before,
-*::after {
-  box-sizing: border-box;
+/* Tipografía: Fraunces (display, con eje óptico) para títulos y marca,
+   Plus Jakarta Sans para toda la interfaz, JetBrains Mono para fragmentos. */
+@import "@fontsource-variable/plus-jakarta-sans";
+@import "@fontsource-variable/fraunces/full.css";
+@import "@fontsource-variable/jetbrains-mono";
+
+/* El tema lo controla el usuario (claro/oscuro/sistema): la clase .dark la
+   estampa ThemeProvider en <html>, no `prefers-color-scheme` directamente. */
+@custom-variant dark (&:where(.dark, .dark *));
+
+/* ── Tokens semánticos ──────────────────────────────────────────────────────
+   Las utilidades apuntan a variables CSS (`@theme inline`), no a valores fijos:
+   así `bg-surface` o `text-ink` cambian de valor al alternar el tema sin
+   necesidad de duplicar cada clase con su variante `dark:`.                  */
+@theme inline {
+  --color-canvas: var(--c-canvas);
+  --color-surface: var(--c-surface);
+  --color-surface-2: var(--c-surface-2);
+  --color-surface-3: var(--c-surface-3);
+  --color-line: var(--c-line);
+  --color-line-strong: var(--c-line-strong);
+
+  --color-ink: var(--c-ink);
+  --color-ink-2: var(--c-ink-2);
+  --color-ink-3: var(--c-ink-3);
+
+  --color-brand: var(--c-brand);
+  --color-brand-hover: var(--c-brand-hover);
+  --color-brand-fg: var(--c-brand-fg);
+  --color-brand-soft: var(--c-brand-soft);
+  --color-brand-soft-fg: var(--c-brand-soft-fg);
+
+  --color-success: var(--c-success);
+  --color-success-soft: var(--c-success-soft);
+  --color-success-fg: var(--c-success-fg);
+  --color-warning: var(--c-warning);
+  --color-warning-soft: var(--c-warning-soft);
+  --color-warning-fg: var(--c-warning-fg);
+  --color-danger: var(--c-danger);
+  --color-danger-soft: var(--c-danger-soft);
+  --color-danger-fg: var(--c-danger-fg);
+  --color-info: var(--c-info);
+  --color-info-soft: var(--c-info-soft);
+  --color-info-fg: var(--c-info-fg);
+
+  /* Gráficos: una sola tonalidad para magnitud (una serie = un color) y la
+     paleta de estado —fija, nunca tematizada— para bueno/atención/crítico. */
+  --color-chart: var(--c-chart);
+  --color-chart-track: var(--c-chart-track);
+  --color-chart-grid: var(--c-chart-grid);
+
+  --font-sans: "Plus Jakarta Sans Variable", ui-sans-serif, system-ui, sans-serif;
+  --font-display: "Fraunces Variable", ui-serif, Georgia, serif;
+  --font-mono: "JetBrains Mono Variable", ui-monospace, monospace;
+
+  --radius-card: 0.875rem;
+  --radius-field: 0.625rem;
 }
 
-body {
-  margin: 0;
-  font-family: system-ui, 'Segoe UI', Roboto, sans-serif;
-  -webkit-font-smoothing: antialiased;
+/* `color-scheme` se fija desde JS (`applyTheme` en theme.tsx), no aquí:
+   declararlo en CSS hace que Lightning CSS reescriba la hoja con variables
+   `--lightningcss-light/dark` para emular `light-dark()`. Funciona, pero deja
+   la salida más difícil de leer y duplica la fuente de verdad del tema, que ya
+   vive en el proveedor de React. */
+:root {
+  /* Claro — papel cálido: los grises tienen un punto de calidez para que no
+     se lea como una plantilla de Tailwind por defecto. */
+  --c-canvas: #f6f5f1;
+  --c-surface: #ffffff;
+  --c-surface-2: #f1efe9;
+  --c-surface-3: #e9e6de;
+  --c-line: #e3e0d7;
+  --c-line-strong: #d2cec2;
+
+  --c-ink: #1b1a16;
+  --c-ink-2: #57534a;
+  /* `ink-3` rotula texto pequeño (11–12 px), así que debe cumplir 4.5:1 —no el
+     3:1 de texto grande— contra la superficie MÁS clara sobre la que aparece. */
+  --c-ink-3: #6e685a;
+
+  --c-brand: #6941d1;
+  --c-brand-hover: #5733af;
+  --c-brand-fg: #ffffff;
+  --c-brand-soft: #f1ecfd;
+  --c-brand-soft-fg: #5733af;
+
+  --c-success: #0ca30c;
+  --c-success-soft: #e7f6e9;
+  --c-success-fg: #1b6b2b;
+  --c-warning: #fab219;
+  --c-warning-soft: #fcf2dc;
+  --c-warning-fg: #8a5a08;
+  --c-danger: #d03b3b;
+  --c-danger-soft: #fceaea;
+  --c-danger-fg: #9b2c2c;
+  --c-info: #2a78d6;
+  --c-info-soft: #e7f0fb;
+  --c-info-fg: #1f4e85;
+
+  --c-chart: #6941d1;
+  --c-chart-track: #ece9e1;
+  --c-chart-grid: #e3e0d7;
+
+  --shadow-ambient: 0 1px 2px rgb(27 26 22 / 0.05), 0 1px 3px rgb(27 26 22 / 0.04);
+  --shadow-raised: 0 4px 6px -1px rgb(27 26 22 / 0.07), 0 2px 4px -2px rgb(27 26 22 / 0.05);
+  --shadow-overlay: 0 20px 25px -5px rgb(27 26 22 / 0.12), 0 8px 10px -6px rgb(27 26 22 / 0.08);
 }
 
-#root {
-  width: 100%;
-  min-height: 100svh;
+.dark {
+  /* Oscuro — tinta con matiz violeta: un negro puro se ve barato y aplana la
+     jerarquía; el matiz mantiene la personalidad de la marca. */
+  --c-canvas: #0e0d12;
+  --c-surface: #17161d;
+  --c-surface-2: #201f28;
+  --c-surface-3: #2a2833;
+  --c-line: #2e2c39;
+  --c-line-strong: #3d3a4a;
+
+  --c-ink: #f4f2ef;
+  --c-ink-2: #b3afbe;
+  /* Mismo criterio que en claro, medido contra `surface-3` (la más clara). */
+  --c-ink-3: #9d99ab;
+
+  --c-brand: #9575ef;
+  --c-brand-hover: #a78bfa;
+  --c-brand-fg: #17161d;
+  --c-brand-soft: #241f35;
+  --c-brand-soft-fg: #c4b2fb;
+
+  --c-success: #0ca30c;
+  --c-success-soft: #12251a;
+  --c-success-fg: #6fd37c;
+  --c-warning: #fab219;
+  --c-warning-soft: #2a2113;
+  --c-warning-fg: #f0c05a;
+  --c-danger: #d03b3b;
+  --c-danger-soft: #2c1719;
+  --c-danger-fg: #f08a8a;
+  --c-info: #2a78d6;
+  --c-info-soft: #152436;
+  --c-info-fg: #7fb3f0;
+
+  --c-chart: #9575ef;
+  --c-chart-track: #262533;
+  --c-chart-grid: #2e2c39;
+
+  --shadow-ambient: 0 1px 2px rgb(0 0 0 / 0.4);
+  --shadow-raised: 0 4px 6px -1px rgb(0 0 0 / 0.5), 0 2px 4px -2px rgb(0 0 0 / 0.4);
+  --shadow-overlay: 0 20px 25px -5px rgb(0 0 0 / 0.6), 0 8px 10px -6px rgb(0 0 0 / 0.5);
+}
+
+@layer base {
+  *,
+  *::before,
+  *::after {
+    box-sizing: border-box;
+  }
+
+  /* El fondo del tema se declara también en `html` —el elemento que propaga el
+     fondo al lienzo del viewport— para que el área que queda por debajo del
+     contenido al hacer scroll elástico use el color del tema y no el blanco
+     del navegador. */
+  html {
+    -webkit-text-size-adjust: 100%;
+    background-color: var(--c-canvas);
+    color: var(--c-ink);
+  }
+
+  body {
+    margin: 0;
+    background-color: var(--c-canvas);
+    color: var(--c-ink);
+    font-family: var(--font-sans);
+    font-synthesis-weight: none;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  #root {
+    width: 100%;
+    min-height: 100svh;
+    background-color: var(--c-canvas);
+    color: var(--c-ink);
+  }
+
+  /* Fraunces trae ejes ópticos y de "wonk": subirlos en tamaños grandes le da
+     carácter editorial sin afectar la legibilidad del texto corrido. */
+  .font-display {
+    font-variation-settings: "SOFT" 20, "WONK" 1, "opsz" 40;
+    letter-spacing: -0.015em;
+  }
+
+  ::selection {
+    background-color: var(--c-brand-soft);
+    color: var(--c-brand-soft-fg);
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--c-brand);
+    outline-offset: 2px;
+    border-radius: 2px;
+  }
+
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    background-color: var(--c-line-strong);
+    border: 3px solid var(--c-canvas);
+    border-radius: 999px;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background-color: var(--c-ink-3);
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+    }
+  }
+}
+
+@layer components {
+  .card {
+    background-color: var(--c-surface);
+    border: 1px solid var(--c-line);
+    border-radius: var(--radius-card);
+    box-shadow: var(--shadow-ambient);
+  }
+
+  /* Botones — la altura y el radio se comparten para que cualquier fila de
+     acciones quede alineada sin ajustes por pantalla. */
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    padding: 0.5rem 0.875rem;
+    border-radius: var(--radius-field);
+    border: 1px solid transparent;
+    font-size: 0.875rem;
+    font-weight: 600;
+    line-height: 1.25rem;
+    white-space: nowrap;
+    cursor: pointer;
+    transition:
+      background-color 0.15s ease,
+      border-color 0.15s ease,
+      color 0.15s ease,
+      opacity 0.15s ease;
+  }
+  .btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+  .btn-sm {
+    padding: 0.3125rem 0.625rem;
+    font-size: 0.78125rem;
+    line-height: 1.125rem;
+    gap: 0.375rem;
+  }
+
+  .btn-primary {
+    background-color: var(--c-brand);
+    color: var(--c-brand-fg);
+  }
+  .btn-primary:hover:not(:disabled) {
+    background-color: var(--c-brand-hover);
+  }
+
+  .btn-secondary {
+    background-color: var(--c-surface);
+    border-color: var(--c-line-strong);
+    color: var(--c-ink);
+  }
+  .btn-secondary:hover:not(:disabled) {
+    background-color: var(--c-surface-2);
+  }
+
+  .btn-soft {
+    background-color: var(--c-brand-soft);
+    color: var(--c-brand-soft-fg);
+  }
+  .btn-soft:hover:not(:disabled) {
+    border-color: var(--c-brand);
+  }
+
+  .btn-ghost {
+    background-color: transparent;
+    color: var(--c-ink-2);
+  }
+  .btn-ghost:hover:not(:disabled) {
+    background-color: var(--c-surface-2);
+    color: var(--c-ink);
+  }
+
+  /* Botones sólidos de estado. Llevan blanco fijo (no `--c-brand-fg`): el
+     relleno es el mismo en ambos temas, así que el texto también debe serlo.
+     El verde es un paso más oscuro que `--c-success` porque el del set de
+     gráficos sólo llega a 3.3:1 con blanco — insuficiente para texto. */
+  .btn-danger {
+    background-color: var(--c-danger);
+    color: #ffffff;
+  }
+  .btn-danger:hover:not(:disabled) {
+    filter: brightness(0.92);
+  }
+
+  .btn-success {
+    background-color: #0a7d0a;
+    color: #ffffff;
+  }
+  .btn-success:hover:not(:disabled) {
+    filter: brightness(0.92);
+  }
+
+  /* Botón sólo-icono: área táctil cuadrada, sin texto que lo dimensione. */
+  .btn-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 2.25rem;
+    height: 2.25rem;
+    border-radius: var(--radius-field);
+    color: var(--c-ink-3);
+    cursor: pointer;
+    transition:
+      background-color 0.15s ease,
+      color 0.15s ease;
+  }
+  .btn-icon:hover {
+    background-color: var(--c-surface-2);
+    color: var(--c-ink);
+  }
+
+  .input {
+    width: 100%;
+    padding: 0.5rem 0.75rem;
+    background-color: var(--c-surface);
+    border: 1px solid var(--c-line-strong);
+    border-radius: var(--radius-field);
+    color: var(--c-ink);
+    font-size: 0.875rem;
+    font-family: inherit;
+    transition:
+      border-color 0.15s ease,
+      box-shadow 0.15s ease;
+  }
+  .input::placeholder {
+    color: var(--c-ink-3);
+  }
+  .input:focus {
+    outline: none;
+    border-color: var(--c-brand);
+    box-shadow: 0 0 0 3px color-mix(in oklab, var(--c-brand) 18%, transparent);
+  }
+  .input:disabled {
+    background-color: var(--c-surface-2);
+    cursor: not-allowed;
+  }
+
+  .label {
+    display: block;
+    font-size: 0.8125rem;
+    font-weight: 600;
+    color: var(--c-ink-2);
+    margin-bottom: 0.375rem;
+  }
+
+  /* Chips de estado: color + icono + texto. El color nunca va solo. */
+  .chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3125rem;
+    padding: 0.1875rem 0.5rem;
+    border-radius: 999px;
+    font-size: 0.75rem;
+    font-weight: 600;
+    line-height: 1rem;
+    white-space: nowrap;
+  }
+  .chip-neutral {
+    background-color: var(--c-surface-2);
+    color: var(--c-ink-2);
+  }
+  .chip-brand {
+    background-color: var(--c-brand-soft);
+    color: var(--c-brand-soft-fg);
+  }
+  .chip-success {
+    background-color: var(--c-success-soft);
+    color: var(--c-success-fg);
+  }
+  .chip-warning {
+    background-color: var(--c-warning-soft);
+    color: var(--c-warning-fg);
+  }
+  .chip-danger {
+    background-color: var(--c-danger-soft);
+    color: var(--c-danger-fg);
+  }
+  .chip-info {
+    background-color: var(--c-info-soft);
+    color: var(--c-info-fg);
+  }
+
+  /* Bloques de aviso, mismo lenguaje que los chips pero a ancho completo. */
+  .note {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.625rem;
+    padding: 0.75rem 1rem;
+    border-radius: var(--radius-field);
+    font-size: 0.875rem;
+  }
+  .note-info {
+    background-color: var(--c-info-soft);
+    color: var(--c-info-fg);
+  }
+  .note-success {
+    background-color: var(--c-success-soft);
+    color: var(--c-success-fg);
+  }
+  .note-warning {
+    background-color: var(--c-warning-soft);
+    color: var(--c-warning-fg);
+  }
+  .note-danger {
+    background-color: var(--c-danger-soft);
+    color: var(--c-danger-fg);
+  }
+  .note-brand {
+    background-color: var(--c-brand-soft);
+    color: var(--c-brand-soft-fg);
+  }
+
+  /* Títulos de sección: sans en negrita: el display serif se reserva para los
+     títulos de página y la marca, para que no pierda impacto. */
+  .section-title {
+    font-size: 0.875rem;
+    font-weight: 700;
+    color: var(--c-ink);
+    letter-spacing: -0.01em;
+  }
+
+  .table-head {
+    padding: 0.625rem 1rem;
+    text-align: left;
+    font-size: 0.75rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--c-ink-3);
+  }
+  .table-cell {
+    padding: 0.75rem 1rem;
+    font-size: 0.875rem;
+    color: var(--c-ink-2);
+  }
+
+  /* Cifras alineadas verticalmente (tablas, ejes). Las cifras grandes de los
+     KPI usan figuras proporcionales a propósito. */
+  .tnum {
+    font-variant-numeric: tabular-nums;
+  }
 }

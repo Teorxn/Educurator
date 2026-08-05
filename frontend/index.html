@@ -1,10 +1,33 @@
 <!doctype html>
-<html lang="en">
+<html lang="es">
   <head>
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>educutaror-frontend</title>
+    <meta
+      name="description"
+      content="EduCurator AI — curación asistida de material académico para docentes y administradores."
+    />
+    <meta name="theme-color" content="#f6f5f1" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#0e0d12" media="(prefers-color-scheme: dark)" />
+    <title>EduCurator AI</title>
+    <script>
+      // Aplica el tema antes del primer pintado: si esperara a React, la
+      // pantalla parpadearía en claro durante un frame al recargar en oscuro.
+      (function () {
+        try {
+          var stored = localStorage.getItem('educurator_theme');
+          var dark =
+            stored === 'dark' ||
+            ((!stored || stored === 'system') &&
+              window.matchMedia('(prefers-color-scheme: dark)').matches);
+          if (dark) document.documentElement.classList.add('dark');
+          document.documentElement.style.colorScheme = dark ? 'dark' : 'light';
+        } catch (e) {
+          /* localStorage bloqueado: se queda en claro */
+        }
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>

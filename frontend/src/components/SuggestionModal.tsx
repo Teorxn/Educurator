@@ -14,20 +14,20 @@ import type { SeverityLevel } from "../api/suggestions";
 const TYPE_LABEL: Record<string, { label: string; color: string }> = {
   redundancy: {
     label: "Redundancia",
-    color: "bg-amber-100 text-amber-800 border-amber-200",
+    color: "bg-warning-soft text-warning-fg border-transparent",
   },
   conflict: {
     label: "Conflicto",
-    color: "bg-red-100 text-red-800 border-red-200",
+    color: "bg-danger-soft text-danger-fg border-transparent",
   },
-  faq: { label: "FAQ", color: "bg-blue-100 text-blue-800 border-blue-200" },
+  faq: { label: "FAQ", color: "bg-info-soft text-info-fg border-transparent" },
   update: {
     label: "Actualización",
-    color: "bg-purple-100 text-purple-800 border-purple-200",
+    color: "bg-brand-soft text-brand-soft-fg border-transparent",
   },
   inconsistency: {
     label: "Inconsistencia",
-    color: "bg-orange-100 text-orange-800 border-orange-200",
+    color: "bg-warning-soft text-warning-fg border-transparent",
   },
 };
 
@@ -37,17 +37,17 @@ const SEVERITY_BADGE: Record<
 > = {
   high: {
     label: "Alta",
-    color: "bg-red-100 text-red-700 border-red-200",
+    color: "bg-danger-soft text-danger-fg border-transparent",
     icon: AlertCircle,
   },
   medium: {
     label: "Media",
-    color: "bg-yellow-100 text-yellow-700 border-yellow-200",
+    color: "bg-warning-soft text-warning-fg border-transparent",
     icon: AlertTriangle,
   },
   low: {
     label: "Baja",
-    color: "bg-gray-100 text-gray-600 border-gray-200",
+    color: "bg-surface-2 text-ink-2 border-line",
     icon: Info,
   },
 };
@@ -122,19 +122,19 @@ export default function SuggestionModal({ suggestion: s, onClose }: Props) {
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-      <div className="fixed inset-0 bg-black/40" onClick={onClose} />
-      <div className="relative bg-white rounded-2xl shadow-xl max-w-2xl w-full max-h-[90vh] overflow-y-auto z-10">
+      <div className="fixed inset-0 bg-black/50 backdrop-blur-[2px]" onClick={onClose} />
+      <div className="relative bg-surface border border-line rounded-2xl shadow-[var(--shadow-overlay)] max-w-2xl w-full max-h-[90vh] overflow-y-auto z-10">
         {/* Header */}
-        <div className="sticky top-0 bg-white border-b border-gray-100 px-6 py-4 flex items-center justify-between rounded-t-2xl z-20">
+        <div className="sticky top-0 bg-surface border-b border-line px-6 py-4 flex items-center justify-between rounded-t-2xl z-20">
           <div className="flex items-center gap-2">
-            <Brain className="w-5 h-5 text-violet-600" />
-            <h2 className="text-lg font-semibold text-gray-900">
+            <Brain className="w-5 h-5 text-brand" />
+            <h2 className="text-lg font-semibold text-ink">
               Razonamiento completo
             </h2>
           </div>
           <button
             onClick={onClose}
-            className="p-1.5 rounded-md text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-colors"
+            className="p-1.5 rounded-md text-ink-3 hover:text-ink-2 hover:bg-surface-2 transition-colors"
           >
             <X className="w-4 h-4" />
           </button>
@@ -157,21 +157,21 @@ export default function SuggestionModal({ suggestion: s, onClose }: Props) {
               </span>
             )}
             {incTypeLabel && (
-              <span className="text-xs font-medium text-gray-500 bg-gray-50 px-2 py-0.5 rounded-full border border-gray-200">
+              <span className="text-xs font-medium text-ink-2 bg-surface-2 px-2 py-0.5 rounded-full border border-line">
                 {incTypeLabel}
               </span>
             )}
-            <span className="text-xs text-gray-400">
+            <span className="text-xs text-ink-3">
               {fmtDate(s.created_at)}
             </span>
           </div>
 
           {/* Description */}
           <div>
-            <h3 className="text-sm font-medium text-gray-500 mb-1">
+            <h3 className="text-sm font-medium text-ink-2 mb-1">
               Descripción
             </h3>
-            <p className="text-sm text-gray-800 leading-relaxed">
+            <p className="text-sm text-ink leading-relaxed">
               {s.description}
             </p>
           </div>
@@ -179,43 +179,43 @@ export default function SuggestionModal({ suggestion: s, onClose }: Props) {
           {/* Split View para inconsistencias */}
           {incData && (incData.extractA || incData.extractB) && (
             <div>
-              <h3 className="text-sm font-medium text-gray-700 mb-2">
+              <h3 className="text-sm font-medium text-ink mb-2">
                 Fragmentos enfrentados
               </h3>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                 {incData.extractA && (
-                  <div className="bg-red-50 border border-red-200 rounded-xl p-4">
+                  <div className="bg-danger-soft border border-transparent rounded-xl p-4">
                     <div className="flex items-center gap-1 mb-2">
-                      <AlertCircle className="w-4 h-4 text-red-500" />
-                      <span className="text-xs font-semibold text-red-700">
+                      <AlertCircle className="w-4 h-4 text-danger-fg" />
+                      <span className="text-xs font-semibold text-danger-fg">
                         Fragmento A
                       </span>
                     </div>
-                    <pre className="text-xs text-red-900 leading-relaxed whitespace-pre-wrap font-sans">
+                    <pre className="text-xs text-danger-fg leading-relaxed whitespace-pre-wrap font-sans">
                       {incData.extractA}
                     </pre>
                   </div>
                 )}
                 {incData.extractB && (
-                  <div className="bg-orange-50 border border-orange-200 rounded-xl p-4">
+                  <div className="bg-warning-soft border border-transparent rounded-xl p-4">
                     <div className="flex items-center gap-1 mb-2">
-                      <AlertTriangle className="w-4 h-4 text-orange-500" />
-                      <span className="text-xs font-semibold text-orange-700">
+                      <AlertTriangle className="w-4 h-4 text-warning-fg" />
+                      <span className="text-xs font-semibold text-warning-fg">
                         Fragmento B
                       </span>
                     </div>
-                    <pre className="text-xs text-orange-900 leading-relaxed whitespace-pre-wrap font-sans">
+                    <pre className="text-xs text-warning-fg leading-relaxed whitespace-pre-wrap font-sans">
                       {incData.extractB}
                     </pre>
                   </div>
                 )}
               </div>
               {incData.suggestion && (
-                <div className="mt-3 bg-green-50 border border-green-200 rounded-xl p-4">
-                  <span className="text-xs font-semibold text-green-700">
+                <div className="mt-3 bg-success-soft border border-transparent rounded-xl p-4">
+                  <span className="text-xs font-semibold text-success-fg">
                     Acción sugerida:
                   </span>
-                  <p className="text-xs text-green-800 mt-1">
+                  <p className="text-xs text-success-fg mt-1">
                     {incData.suggestion}
                   </p>
                 </div>
@@ -225,39 +225,39 @@ export default function SuggestionModal({ suggestion: s, onClose }: Props) {
 
           {/* Confidence & Similarity */}
           <div className="grid grid-cols-2 gap-4">
-            <div className="bg-violet-50 rounded-xl p-4">
+            <div className="bg-brand-soft rounded-xl p-4">
               <div className="flex items-center gap-2 mb-1">
-                <Target className="w-4 h-4 text-violet-600" />
-                <span className="text-xs font-medium text-gray-500">
+                <Target className="w-4 h-4 text-brand" />
+                <span className="text-xs font-medium text-ink-2">
                   Confianza
                 </span>
               </div>
-              <p className="text-2xl font-bold text-violet-700">
+              <p className="text-2xl font-bold text-brand">
                 {fmtConfidence(s.confidence_score ?? 0)}
               </p>
             </div>
             {incData && severityStyle && (
-              <div className="bg-gray-50 rounded-xl p-4">
+              <div className="bg-surface-2 rounded-xl p-4">
                 <div className="flex items-center gap-2 mb-1">
-                  <SeverityIcon className="w-4 h-4 text-gray-600" />
-                  <span className="text-xs font-medium text-gray-500">
+                  <SeverityIcon className="w-4 h-4 text-ink-2" />
+                  <span className="text-xs font-medium text-ink-2">
                     Severidad
                   </span>
                 </div>
-                <p className="text-2xl font-bold text-gray-700">
+                <p className="text-2xl font-bold text-ink">
                   {severityStyle.label}
                 </p>
               </div>
             )}
             {!incData && (
-              <div className="bg-blue-50 rounded-xl p-4">
+              <div className="bg-info-soft rounded-xl p-4">
                 <div className="flex items-center gap-2 mb-1">
-                  <Brain className="w-4 h-4 text-blue-600" />
-                  <span className="text-xs font-medium text-gray-500">
+                  <Brain className="w-4 h-4 text-info-fg" />
+                  <span className="text-xs font-medium text-ink-2">
                     Similitud
                   </span>
                 </div>
-                <p className="text-2xl font-bold text-blue-700">
+                <p className="text-2xl font-bold text-info-fg">
                   {fmtConfidence(s.confidence_score ?? 0)}
                 </p>
               </div>
@@ -268,13 +268,13 @@ export default function SuggestionModal({ suggestion: s, onClose }: Props) {
           {s.reasoning && (
             <div>
               <div className="flex items-center gap-2 mb-2">
-                <Brain className="w-4 h-4 text-violet-600" />
-                <h3 className="text-sm font-medium text-gray-700">
+                <Brain className="w-4 h-4 text-brand" />
+                <h3 className="text-sm font-medium text-ink">
                   Razonamiento del agente
                 </h3>
               </div>
-              <div className="bg-gray-50 border border-gray-200 rounded-xl p-4">
-                <p className="text-sm text-gray-700 leading-relaxed whitespace-pre-wrap">
+              <div className="bg-surface-2 border border-line rounded-xl p-4">
+                <p className="text-sm text-ink leading-relaxed whitespace-pre-wrap">
                   {s.reasoning}
                 </p>
               </div>
@@ -285,8 +285,8 @@ export default function SuggestionModal({ suggestion: s, onClose }: Props) {
           {s.source_chunks && s.source_chunks.length > 0 && (
             <div>
               <div className="flex items-center gap-2 mb-2">
-                <ScrollText className="w-4 h-4 text-violet-600" />
-                <h3 className="text-sm font-medium text-gray-700">
+                <ScrollText className="w-4 h-4 text-brand" />
+                <h3 className="text-sm font-medium text-ink">
                   Chunks fuente ({s.source_chunks.length})
                 </h3>
               </div>
@@ -294,19 +294,19 @@ export default function SuggestionModal({ suggestion: s, onClose }: Props) {
                 {s.source_chunks.map((chunk) => (
                   <div
                     key={chunk.chunk_id}
-                    className="bg-gray-50 border border-gray-200 rounded-xl p-4"
+                    className="bg-surface-2 border border-line rounded-xl p-4"
                   >
                     <div className="flex items-center justify-between mb-2">
-                      <span className="text-xs font-medium text-gray-500">
+                      <span className="text-xs font-medium text-ink-2">
                         Chunk #{chunk.chunk_index}
                       </span>
-                      <span className="text-xs text-gray-400">
+                      <span className="text-xs text-ink-3">
                         {chunk.token_count} tokens
                         {chunk.page_number != null &&
                           ` · pág. ${chunk.page_number}`}
                       </span>
                     </div>
-                    <pre className="text-xs text-gray-700 leading-relaxed whitespace-pre-wrap font-sans">
+                    <pre className="text-xs text-ink leading-relaxed whitespace-pre-wrap font-sans">
                       {chunk.content}
                     </pre>
                   </div>
@@ -317,7 +317,7 @@ export default function SuggestionModal({ suggestion: s, onClose }: Props) {
 
           {/* Source document info */}
           {s.source_type && (
-            <div className="flex items-center gap-2 text-xs text-gray-500 bg-gray-50 rounded-xl px-4 py-3">
+            <div className="flex items-center gap-2 text-xs text-ink-2 bg-surface-2 rounded-xl px-4 py-3">
               <FileText className="w-3.5 h-3.5" />
               <span>
                 Fuente:{" "}

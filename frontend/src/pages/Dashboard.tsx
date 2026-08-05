@@ -9,20 +9,11 @@ import {
   Upload,
   AlertCircle,
   TrendingUp,
+  ArrowRight,
 } from "lucide-react";
 import { getDashboard } from "../api/account";
 import type { DashboardData } from "../api/account";
-
-const STATUS_LABEL: Record<string, { label: string; color: string }> = {
-  queued: { label: "En cola", color: "bg-gray-100 text-gray-700" },
-  processing: { label: "Procesando", color: "bg-blue-50 text-blue-700" },
-  analyzed: { label: "Analizado", color: "bg-violet-50 text-violet-700" },
-  error: { label: "Error", color: "bg-red-50 text-red-700" },
-  needs_review: { label: "Por revisar", color: "bg-yellow-50 text-yellow-700" },
-  approved: { label: "Aprobado", color: "bg-green-50 text-green-700" },
-  rejected: { label: "Rechazado", color: "bg-red-50 text-red-700" },
-  archived: { label: "Archivado", color: "bg-gray-100 text-gray-500" },
-};
+import DocBadge from "../components/DocBadge";
 
 function fmtDate(d: string | null) {
   if (!d) return "—";
@@ -30,6 +21,36 @@ function fmtDate(d: string | null) {
     dateStyle: "medium",
     timeStyle: "short",
   }).format(new Date(d));
+}
+
+/** Métrica destacada. Cifras en la sans con figuras proporcionales: las
+ *  tabulares se reservan para columnas que deben alinearse verticalmente. */
+function StatTile({
+  icon: Icon,
+  label,
+  value,
+  tone,
+}: {
+  icon: typeof FileText;
+  label: string;
+  value: string | number;
+  tone: string;
+}) {
+  return (
+    <div className="card p-4">
+      <div className="flex items-center gap-2">
+        <span
+          className={`flex h-7 w-7 items-center justify-center rounded-lg ${tone}`}
+        >
+          <Icon className="h-4 w-4" />
+        </span>
+        <span className="text-xs font-medium text-ink-2">{label}</span>
+      </div>
+      <p className="mt-3 text-3xl leading-none font-semibold tracking-tight text-ink">
+        {value}
+      </p>
+    </div>
+  );
 }
 
 /** HU-20 — Panel de inicio: resumen del estado de la base de conocimiento. */
@@ -64,8 +85,8 @@ export default function Dashboard() {
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center h-64 text-gray-400 gap-2">
-        <Loader2 className="w-5 h-5 animate-spin" />
+      <div className="flex h-64 items-center justify-center gap-2 text-ink-3">
+        <Loader2 className="h-5 w-5 animate-spin" />
         <span className="text-sm">Cargando panel...</span>
       </div>
     );
@@ -73,102 +94,87 @@ export default function Dashboard() {
 
   if (error || !data) {
     return (
-      <div className="flex items-center gap-2 bg-red-50 border border-red-200 text-red-700 text-sm rounded-xl px-4 py-3">
-        <AlertCircle className="w-4 h-4 shrink-0" />
+      <div className="note note-danger" role="alert">
+        <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
         {error || "Sin datos"}
       </div>
     );
   }
 
   const m = data.metrics;
-  const kpis = [
-    {
-      label: "Documentos",
-      value: m.total_documents,
-      icon: FileText,
-      color: "text-blue-600 bg-blue-50",
-    },
-    {
-      label: "Sugerencias",
-      value: m.total_suggestions,
-      icon: Activity,
-      color: "text-violet-600 bg-violet-50",
-    },
-    {
-      label: "Pendientes",
-      value: m.pending_suggestions,
-      icon: Clock,
-      color: "text-yellow-600 bg-yellow-50",
-    },
-    {
-      label: "Tasa de aprobación",
-      value: `${Math.round(m.approval_rate * 100)}%`,
-      icon: TrendingUp,
-      color: "text-green-600 bg-green-50",
-    },
-  ];
 
   return (
-    <div className="space-y-5">
+    <div className="mx-auto max-w-6xl space-y-5">
       {/* KPIs — visibles sin scroll (criterio UX de HU-20) */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-        {kpis.map(({ label, value, icon: Icon, color }) => (
-          <div
-            key={label}
-            className="bg-white rounded-xl border border-gray-200 p-4"
-          >
-            <div className="flex items-center gap-2 mb-2">
-              <span className={`p-1.5 rounded-lg ${color}`}>
-                <Icon className="w-4 h-4" />
-              </span>
-              <span className="text-xs text-gray-500">{label}</span>
-            </div>
-            <p className="text-2xl font-semibold text-gray-900">{value}</p>
-          </div>
-        ))}
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+        <StatTile
+          icon={FileText}
+          label="Documentos"
+          value={m.total_documents}
+          tone="bg-info-soft text-info-fg"
+        />
+        <StatTile
+          icon={Activity}
+          label="Sugerencias"
+          value={m.total_suggestions}
+          tone="bg-brand-soft text-brand-soft-fg"
+        />
+        <StatTile
+          icon={Clock}
+          label="Pendientes"
+          value={m.pending_suggestions}
+          tone="bg-warning-soft text-warning-fg"
+        />
+        <StatTile
+          icon={TrendingUp}
+          label="Tasa de aprobación"
+          value={`${Math.round(m.approval_rate * 100)}%`}
+          tone="bg-success-soft text-success-fg"
+        />
       </div>
 
-      <div className="grid lg:grid-cols-2 gap-4">
+      <div className="grid gap-4 lg:grid-cols-2">
         {/* Pendientes de revisión con acceso directo */}
-        <section className="bg-white rounded-xl border border-gray-200 p-4">
-          <div className="flex items-center justify-between mb-3">
-            <h2 className="text-sm font-semibold text-gray-800">
-              Pendientes de revisión
-            </h2>
+        <section className="card p-4">
+          <div className="mb-3 flex items-center justify-between gap-2">
+            <h2 className="section-title">Pendientes de revisión</h2>
             {m.pending_suggestions > 0 && (
               <button
                 onClick={() => navigate("/review")}
-                className="text-xs font-medium text-violet-600 hover:text-violet-700"
+                className="flex items-center gap-1 text-xs font-semibold text-brand hover:text-brand-hover"
               >
-                Revisar todas →
+                Revisar todas
+                <ArrowRight className="h-3 w-3" />
               </button>
             )}
           </div>
 
           {data.pending_documents.length === 0 ? (
-            <div className="flex flex-col items-center justify-center py-8 text-center">
-              <CheckCircle2 className="w-8 h-8 text-green-500 mb-2" />
-              <p className="text-sm text-gray-600">Todo al día</p>
-              <p className="text-xs text-gray-400 mt-0.5">
+            <div className="flex flex-col items-center justify-center py-9 text-center">
+              <span className="mb-2.5 flex h-10 w-10 items-center justify-center rounded-full bg-success-soft">
+                <CheckCircle2 className="h-5 w-5 text-success-fg" />
+              </span>
+              <p className="text-sm font-medium text-ink">Todo al día</p>
+              <p className="mt-0.5 text-xs text-ink-3">
                 No hay documentos esperando revisión
               </p>
             </div>
           ) : (
-            <ul className="space-y-2">
+            <ul className="space-y-1.5">
               {data.pending_documents.map((d) => (
                 <li key={d.id}>
                   <button
                     onClick={() => navigate(`/review?document_id=${d.id}`)}
-                    className="w-full flex items-center justify-between gap-3 p-2.5 rounded-lg border border-gray-100 hover:border-violet-200 hover:bg-violet-50/40 transition-colors text-left"
+                    className="flex w-full items-center justify-between gap-3 rounded-field border border-line px-3 py-2.5 text-left transition-colors hover:border-brand/40 hover:bg-surface-2"
                   >
-                    <span className="flex items-center gap-2 min-w-0">
-                      <FileText className="w-4 h-4 text-gray-400 shrink-0" />
-                      <span className="text-sm text-gray-700 truncate">
+                    <span className="flex min-w-0 items-center gap-2">
+                      <FileText className="h-4 w-4 shrink-0 text-ink-3" />
+                      <span className="truncate text-sm text-ink">
                         {d.filename}
                       </span>
                     </span>
                     {d.pending_suggestions > 0 && (
-                      <span className="text-xs font-medium text-yellow-700 bg-yellow-50 border border-yellow-200 px-2 py-0.5 rounded-full shrink-0">
+                      <span className="chip chip-warning shrink-0">
                         {d.pending_suggestions} pendiente
                         {d.pending_suggestions !== 1 ? "s" : ""}
                       </span>
@@ -181,59 +187,54 @@ export default function Dashboard() {
         </section>
 
         {/* Análisis recientes */}
-        <section className="bg-white rounded-xl border border-gray-200 p-4">
-          <div className="flex items-center justify-between mb-3">
-            <h2 className="text-sm font-semibold text-gray-800">
-              Análisis recientes
-            </h2>
+        <section className="card p-4">
+          <div className="mb-3 flex items-center justify-between gap-2">
+            <h2 className="section-title">Análisis recientes</h2>
             <button
-              onClick={() => navigate("/upload")}
-              className="flex items-center gap-1.5 text-xs font-medium text-violet-600 hover:text-violet-700"
+              onClick={() => navigate("/docs")}
+              className="flex items-center gap-1.5 text-xs font-semibold text-brand hover:text-brand-hover"
             >
-              <Upload className="w-3.5 h-3.5" />
+              <Upload className="h-3.5 w-3.5" />
               Subir documento
             </button>
           </div>
 
           {data.recent_documents.length === 0 ? (
-            <div className="flex flex-col items-center justify-center py-8 text-center">
-              <FileText className="w-8 h-8 text-gray-300 mb-2" />
-              <p className="text-sm text-gray-600">Aún no hay documentos</p>
+            <div className="flex flex-col items-center justify-center py-9 text-center">
+              <span className="mb-2.5 flex h-10 w-10 items-center justify-center rounded-full bg-surface-2">
+                <FileText className="h-5 w-5 text-ink-3" />
+              </span>
+              <p className="text-sm font-medium text-ink">Aún no hay documentos</p>
               <button
-                onClick={() => navigate("/upload")}
-                className="mt-3 text-xs font-medium bg-violet-600 hover:bg-violet-700 text-white px-3 py-1.5 rounded-lg"
+                onClick={() => navigate("/docs")}
+                className="btn btn-primary btn-sm mt-3"
               >
                 Subir el primero
               </button>
             </div>
           ) : (
-            <ul className="space-y-2">
-              {data.recent_documents.map((d) => {
-                const st = STATUS_LABEL[d.status] ?? STATUS_LABEL.needs_review;
-                return (
-                  <li key={d.id}>
-                    <button
-                      onClick={() => navigate(`/docs/${d.id}`)}
-                      className="w-full flex items-center justify-between gap-3 p-2.5 rounded-lg border border-gray-100 hover:border-violet-200 hover:bg-violet-50/40 transition-colors text-left"
-                    >
-                      <span className="min-w-0">
-                        <span className="block text-sm text-gray-700 truncate">
-                          {d.filename}
-                        </span>
-                        <span className="block text-xs text-gray-400 mt-0.5">
-                          {fmtDate(d.uploaded_at)} · {d.suggestions_count}{" "}
-                          sugerencia{d.suggestions_count !== 1 ? "s" : ""}
-                        </span>
+            <ul className="space-y-1.5">
+              {data.recent_documents.map((d) => (
+                <li key={d.id}>
+                  <button
+                    onClick={() => navigate(`/docs/${d.id}`)}
+                    className="flex w-full items-center justify-between gap-3 rounded-field border border-line px-3 py-2.5 text-left transition-colors hover:border-brand/40 hover:bg-surface-2"
+                  >
+                    <span className="min-w-0">
+                      <span className="block truncate text-sm text-ink">
+                        {d.filename}
                       </span>
-                      <span
-                        className={`text-xs font-medium px-2 py-0.5 rounded-full shrink-0 ${st.color}`}
-                      >
-                        {st.label}
+                      <span className="mt-0.5 block text-xs text-ink-3">
+                        {fmtDate(d.uploaded_at)} · {d.suggestions_count} sugerencia
+                        {d.suggestions_count !== 1 ? "s" : ""}
                       </span>
-                    </button>
-                  </li>
-                );
-              })}
+                    </span>
+                    <span className="shrink-0">
+                      <DocBadge status={d.status} />
+                    </span>
+                  </button>
+                </li>
+              ))}
             </ul>
           )}
         </section>
@@ -241,29 +242,34 @@ export default function Dashboard() {
 
       {/* Última ejecución del agente */}
       {data.last_run && (
-        <section className="bg-white rounded-xl border border-gray-200 p-4">
-          <div className="flex items-center justify-between flex-wrap gap-2">
-            <div className="flex items-center gap-2">
-              <Activity className="w-4 h-4 text-violet-500" />
-              <span className="text-sm text-gray-700">
+        <section className="card p-4">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="flex items-center gap-2.5">
+              <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-brand-soft">
+                <Activity className="h-4 w-4 text-brand-soft-fg" />
+              </span>
+              <span className="text-sm text-ink-2">
                 Última ejecución del agente:{" "}
-                <span className="font-medium">
+                <span className="font-semibold text-ink">
                   {fmtDate(data.last_run.started_at)}
                 </span>
               </span>
             </div>
-            <div className="flex items-center gap-3 text-xs text-gray-500">
+            <div className="flex flex-wrap items-center gap-3 text-xs text-ink-3">
               {data.last_run.duration_seconds != null && (
-                <span>{data.last_run.duration_seconds.toFixed(1)} s</span>
+                <span className="tnum">
+                  {data.last_run.duration_seconds.toFixed(1)} s
+                </span>
               )}
               <span>
                 {data.last_run.suggestions_generated} sugerencias generadas
               </span>
               <button
                 onClick={() => navigate("/agent-runs")}
-                className="font-medium text-violet-600 hover:text-violet-700"
+                className="flex items-center gap-1 font-semibold text-brand hover:text-brand-hover"
               >
-                Ver historial →
+                Ver historial
+                <ArrowRight className="h-3 w-3" />
               </button>
             </div>
           </div>

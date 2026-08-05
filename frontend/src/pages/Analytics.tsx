@@ -9,78 +9,188 @@ import {
   CheckCircle2,
   TrendingUp,
   RefreshCw,
+  XCircle,
 } from "lucide-react";
 import { getAnalytics, type AnalyticsData } from "../api/suggestions";
 import TokenUsagePanel from "../components/TokenUsagePanel";
+
+const STATUS_LABEL: Record<string, string> = {
+  queued: "En cola",
+  processing: "Procesando",
+  analyzed: "Analizado",
+  error: "Error",
+  needs_review: "Por revisar",
+  approved: "Aprobado",
+  rejected: "Rechazado",
+  archived: "Archivado",
+};
+
+const TYPE_LABEL: Record<string, string> = {
+  redundancy: "Redundancia",
+  conflict: "Conflicto",
+  faq: "FAQ",
+  update: "Actualización",
+  inconsistency: "Inconsistencia",
+};
 
 function StatCard({
   icon: Icon,
   label,
   value,
-  color,
+  tone,
 }: {
   icon: React.ComponentType<{ className?: string }>;
   label: string;
   value: string | number;
-  color: string;
+  tone: string;
 }) {
   return (
-    <div className="bg-white rounded-xl border border-gray-200 p-5 flex items-center gap-4">
+    <div className="card flex items-center gap-4 p-5">
       <div
-        className={`w-10 h-10 rounded-xl flex items-center justify-center ${color}`}
+        className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl ${tone}`}
       >
-        <Icon className="w-5 h-5" />
+        <Icon className="h-5 w-5" />
       </div>
-      <div>
-        <p className="text-2xl font-bold text-gray-900">{value}</p>
-        <p className="text-xs text-gray-500 mt-0.5">{label}</p>
+      <div className="min-w-0">
+        {/* Figuras proporcionales: las tabulares se reservan para columnas */}
+        <p className="text-2xl leading-none font-semibold tracking-tight text-ink">
+          {value}
+        </p>
+        <p className="mt-1 text-xs text-ink-2">{label}</p>
       </div>
     </div>
   );
 }
 
+/**
+ * Fila de barra horizontal. Una sola serie ⇒ un solo color: la etiqueta ya
+ * identifica la categoría, así que teñir cada barra de un matiz distinto
+ * gastaría el canal de color en información que la fila ya muestra.
+ */
 function BarRow({
   label,
   value,
   max,
-  color,
+  total,
 }: {
   label: string;
   value: number;
   max: number;
-  color: string;
+  total: number;
 }) {
   const pct = max > 0 ? (value / max) * 100 : 0;
+  const share = total > 0 ? Math.round((value / total) * 100) : 0;
   return (
     <div className="flex items-center gap-3">
-      <span className="w-24 text-xs text-gray-600 shrink-0 capitalize">
+      <span className="w-28 shrink-0 truncate text-xs text-ink-2" title={label}>
         {label}
       </span>
-      <div className="flex-1 bg-gray-100 rounded-full h-2">
+      <div className="h-2 flex-1 overflow-hidden rounded-full bg-chart-track">
         <div
-          className={`h-2 rounded-full ${color} transition-all duration-500`}
-          style={{ width: `${pct}%` }}
+          className="h-2 rounded-full bg-chart transition-[width] duration-500"
+          style={{ width: `${Math.max(pct, value > 0 ? 2 : 0)}%` }}
+          role="img"
+          aria-label={`${label}: ${value} (${share}%)`}
         />
       </div>
-      <span className="w-6 text-xs text-gray-500 text-right">{value}</span>
+      <span className="tnum w-14 shrink-0 text-right text-xs text-ink-2">
+        {value}
+        <span className="ml-1 text-ink-3">{share}%</span>
+      </span>
     </div>
   );
 }
 
-const TYPE_COLORS: Record<string, string> = {
-  redundancy: "bg-yellow-400",
-  conflict: "bg-red-400",
-  faq: "bg-blue-400",
-  update: "bg-purple-400",
-};
+/**
+ * Dona de estado de sugerencias. Usa la paleta de estado (fija, no tematizada)
+ * y la leyenda muestra la cifra exacta de cada segmento, de modo que ningún
+ * valor depende de distinguir el color ni de pasar el cursor por encima.
+ */
+function StatusDonut({
+  segments,
+  total,
+}: {
+  segments: { label: string; value: number; color: string; icon: typeof Clock }[];
+  total: number;
+}) {
+  // Hueco de 1.2 unidades entre segmentos (la circunferencia con r=15.9 mide
+  // ~100), en lugar de un borde: separa sin añadir un trazo extra.
+  const GAP = 1.2;
 
-const STATUS_COLORS: Record<string, string> = {
-  needs_review: "bg-gray-400",
-  processing: "bg-yellow-400",
-  approved: "bg-green-400",
-  rejected: "bg-red-400",
-  archived: "bg-blue-400",
-};
+  // Los desplazamientos se acumulan con un reduce puro: mutar una variable
+  // suelta durante el render es justo lo que el compilador de React marca.
+  const arcs = segments.reduce<
+    { label: string; value: number; color: string; pct: number; dash: number; offset: number }[]
+  >((acc, s) => {
+    const pct = total > 0 ? (s.value / total) * 100 : 0;
+    const offset = acc.reduce((sum, a) => sum + a.pct, 0);
+    acc.push({
+      label: s.label,
+      value: s.value,
+      color: s.color,
+      pct,
+      dash: Math.max(0, pct - (pct > GAP ? GAP : 0)),
+      offset,
+    });
+    return acc;
+  }, []);
+
+  return (
+    <div className="flex flex-wrap items-center gap-6">
+      <div className="relative h-28 w-28 shrink-0">
+        <svg viewBox="0 0 36 36" className="h-full w-full -rotate-90">
+          <circle
+            cx="18"
+            cy="18"
+            r="15.9"
+            fill="none"
+            className="stroke-chart-track"
+            strokeWidth="3.5"
+          />
+          {arcs.map((a) =>
+            a.pct > 0 ? (
+              <circle
+                key={a.label}
+                cx="18"
+                cy="18"
+                r="15.9"
+                fill="none"
+                stroke={a.color}
+                strokeWidth="3.5"
+                strokeDasharray={`${a.dash} ${100 - a.dash}`}
+                strokeDashoffset={-a.offset}
+              >
+                <title>{`${a.label}: ${a.value}`}</title>
+              </circle>
+            ) : null,
+          )}
+        </svg>
+        <span className="absolute inset-0 flex flex-col items-center justify-center">
+          <span className="text-xl leading-none font-semibold text-ink">
+            {total}
+          </span>
+          <span className="mt-0.5 text-[10px] text-ink-3">total</span>
+        </span>
+      </div>
+
+      {/* Leyenda: icono + etiqueta + cifra. El color nunca informa por sí solo. */}
+      <ul className="space-y-2">
+        {segments.map(({ label, value, color, icon: Icon }) => (
+          <li key={label} className="flex items-center gap-2.5 text-xs">
+            <span
+              aria-hidden
+              className="h-2.5 w-2.5 shrink-0 rounded-full"
+              style={{ backgroundColor: color }}
+            />
+            <Icon className="h-3.5 w-3.5 shrink-0 text-ink-3" />
+            <span className="text-ink-2">{label}</span>
+            <span className="tnum font-semibold text-ink">{value}</span>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
 
 export default function Analytics() {
   const [data, setData] = useState<AnalyticsData | null>(null);
@@ -96,8 +206,8 @@ export default function Analytics() {
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center h-64 text-gray-400 gap-2">
-        <RefreshCw className="w-5 h-5 animate-spin" />
+      <div className="flex h-64 items-center justify-center gap-2 text-ink-3">
+        <RefreshCw className="h-5 w-5 animate-spin" />
         <span className="text-sm">Cargando métricas...</span>
       </div>
     );
@@ -105,16 +215,20 @@ export default function Analytics() {
 
   if (error || !data) {
     return (
-      <div className="flex flex-col items-center justify-center h-64 text-gray-400">
-        <BarChart3 className="w-10 h-10 mb-3 opacity-40" />
-        <p className="text-sm">No se pudieron cargar las métricas</p>
-        <p className="text-xs mt-1 text-gray-400">
+      <div className="flex h-64 flex-col items-center justify-center text-center text-ink-3">
+        <BarChart3 className="mb-3 h-10 w-10 opacity-40" />
+        <p className="text-sm font-medium text-ink-2">
+          No se pudieron cargar las métricas
+        </p>
+        <p className="mt-1 text-xs">
           Verifica que el backend esté corriendo en :8000
         </p>
       </div>
     );
   }
 
+  const docStatuses = Object.entries(data.by_status);
+  const sugTypes = Object.entries(data.suggestions_by_type);
   const maxDocStatus = Math.max(...Object.values(data.by_status), 1);
   const maxSugType = Math.max(...Object.values(data.suggestions_by_type), 1);
   const pending = data.suggestions_by_status["pending"] ?? 0;
@@ -122,175 +236,151 @@ export default function Analytics() {
   const rejected = data.suggestions_by_status["rejected"] ?? 0;
 
   return (
-    <div className="space-y-6">
-      {/* KPI Cards */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+    <div className="mx-auto max-w-6xl space-y-4">
+      {/* KPIs */}
+      <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
         <StatCard
           icon={FileText}
           label="Documentos totales"
           value={data.total_documents}
-          color="bg-blue-50 text-blue-600"
+          tone="bg-info-soft text-info-fg"
         />
         <StatCard
           icon={BarChart3}
           label="Sugerencias totales"
           value={data.total_suggestions}
-          color="bg-violet-50 text-violet-600"
+          tone="bg-brand-soft text-brand-soft-fg"
         />
         <StatCard
           icon={CheckCircle2}
           label="Aprobadas"
           value={approved}
-          color="bg-green-50 text-green-600"
+          tone="bg-success-soft text-success-fg"
         />
         <StatCard
           icon={TrendingUp}
           label="Tasa de aprobación"
           value={`${Math.round(data.approval_rate * 100)}%`}
-          color="bg-emerald-50 text-emerald-600"
+          tone="bg-success-soft text-success-fg"
         />
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        {/* Docs by status */}
-        <div className="bg-white rounded-xl border border-gray-200 p-5">
-          <h2 className="text-sm font-semibold text-gray-800 mb-4">
-            Documentos por estado
-          </h2>
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+        {/* Documentos por estado */}
+        <div className="card p-5">
+          <h2 className="section-title mb-4">Documentos por estado</h2>
           <div className="space-y-3">
-            {Object.entries(data.by_status).length === 0 ? (
-              <p className="text-xs text-gray-400">Sin datos aún</p>
+            {docStatuses.length === 0 ? (
+              <p className="text-xs text-ink-3">Sin datos aún</p>
             ) : (
-              Object.entries(data.by_status).map(([status, count]) => (
+              docStatuses.map(([status, count]) => (
                 <BarRow
                   key={status}
-                  label={status.replace("_", " ")}
+                  label={STATUS_LABEL[status] ?? status.replace("_", " ")}
                   value={count}
                   max={maxDocStatus}
-                  color={STATUS_COLORS[status] ?? "bg-gray-400"}
+                  total={data.total_documents}
                 />
               ))
             )}
           </div>
         </div>
 
-        {/* Suggestions by type */}
-        <div className="bg-white rounded-xl border border-gray-200 p-5">
-          <h2 className="text-sm font-semibold text-gray-800 mb-4">
-            Sugerencias por tipo
-          </h2>
+        {/* Sugerencias por tipo */}
+        <div className="card p-5">
+          <h2 className="section-title mb-4">Sugerencias por tipo</h2>
           <div className="space-y-3">
-            {Object.entries(data.suggestions_by_type).length === 0 ? (
-              <p className="text-xs text-gray-400">Sin sugerencias aún</p>
+            {sugTypes.length === 0 ? (
+              <p className="text-xs text-ink-3">Sin sugerencias aún</p>
             ) : (
-              Object.entries(data.suggestions_by_type).map(([type, count]) => (
+              sugTypes.map(([type, count]) => (
                 <BarRow
                   key={type}
-                  label={type}
+                  label={TYPE_LABEL[type] ?? type}
                   value={count}
                   max={maxSugType}
-                  color={TYPE_COLORS[type] ?? "bg-gray-400"}
+                  total={data.total_suggestions}
                 />
               ))
             )}
           </div>
         </div>
 
-        {/* Suggestions status donut (manual) */}
-        <div className="bg-white rounded-xl border border-gray-200 p-5">
-          <h2 className="text-sm font-semibold text-gray-800 mb-4">
-            Estado de sugerencias
-          </h2>
-          <div className="flex items-center gap-6">
-            <div className="relative w-24 h-24 shrink-0">
-              <svg viewBox="0 0 36 36" className="-rotate-90 w-full h-full">
-                {
-                  [
-                    { value: pending, color: "#6b7280" },
-                    { value: approved, color: "#22c55e" },
-                    { value: rejected, color: "#ef4444" },
-                  ].reduce<{ offset: number; els: React.JSX.Element[] }>(
-                    ({ offset, els }, { value, color }, i) => {
-                      const total = data.total_suggestions || 1;
-                      const pct = (value / total) * 100;
-                      els.push(
-                        <circle
-                          key={i}
-                          cx="18"
-                          cy="18"
-                          r="15.9"
-                          fill="none"
-                          stroke={color}
-                          strokeWidth="3.5"
-                          strokeDasharray={`${pct} ${100 - pct}`}
-                          strokeDashoffset={-offset}
-                        />,
-                      );
-                      return { offset: offset + pct, els };
-                    },
-                    { offset: 0, els: [] },
-                  ).els
-                }
-              </svg>
-              <span className="absolute inset-0 flex items-center justify-center text-xs font-bold text-gray-700">
-                {data.total_suggestions}
-              </span>
-            </div>
-            <div className="space-y-2 text-xs">
-              <div className="flex items-center gap-2">
-                <span className="w-3 h-3 rounded-full bg-gray-400 inline-block" />
-                <span className="text-gray-600">Pendiente: {pending}</span>
-              </div>
-              <div className="flex items-center gap-2">
-                <span className="w-3 h-3 rounded-full bg-green-500 inline-block" />
-                <span className="text-gray-600">Aprobada: {approved}</span>
-              </div>
-              <div className="flex items-center gap-2">
-                <span className="w-3 h-3 rounded-full bg-red-500 inline-block" />
-                <span className="text-gray-600">Rechazada: {rejected}</span>
-              </div>
-            </div>
-          </div>
+        {/* Estado de sugerencias */}
+        <div className="card p-5">
+          <h2 className="section-title mb-4">Estado de sugerencias</h2>
+          <StatusDonut
+            total={data.total_suggestions}
+            segments={[
+              {
+                label: "Pendientes",
+                value: pending,
+                color: "var(--c-warning)",
+                icon: Clock,
+              },
+              {
+                label: "Aprobadas",
+                value: approved,
+                color: "var(--c-success)",
+                icon: CheckCircle2,
+              },
+              {
+                label: "Rechazadas",
+                value: rejected,
+                color: "var(--c-danger)",
+                icon: XCircle,
+              },
+            ]}
+          />
         </div>
 
-        {/* Pending actions */}
-        <div className="bg-white rounded-xl border border-gray-200 p-5">
-          <h2 className="text-sm font-semibold text-gray-800 mb-4">
-            Acciones pendientes
-          </h2>
-          <div className="space-y-3">
-            <div className="flex items-center gap-3 p-3 bg-yellow-50 rounded-lg border border-yellow-100">
-              <Clock className="w-4 h-4 text-yellow-600 shrink-0" />
-              <div>
-                <p className="text-sm font-medium text-yellow-800">
-                  {pending} sugerencia{pending !== 1 ? "s" : ""} por revisar
-                </p>
-                <p className="text-xs text-yellow-600 mt-0.5">
-                  Ve a Revisión para aprobar o rechazar
-                </p>
+        {/* Acciones pendientes */}
+        <div className="card p-5">
+          <h2 className="section-title mb-4">Acciones pendientes</h2>
+          <div className="space-y-2.5">
+            {pending === 0 && (data.by_status["needs_review"] ?? 0) === 0 ? (
+              <div className="note note-success">
+                <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0" />
+                <span>No hay nada esperando tu revisión.</span>
               </div>
-            </div>
-            {(data.by_status["needs_review"] ?? 0) > 0 && (
-              <div className="flex items-center gap-3 p-3 bg-blue-50 rounded-lg border border-blue-100">
-                <FileText className="w-4 h-4 text-blue-600 shrink-0" />
-                <div>
-                  <p className="text-sm font-medium text-blue-800">
-                    {data.by_status["needs_review"]} documento
-                    {(data.by_status["needs_review"] ?? 0) !== 1 ? "s" : ""} sin
-                    analizar
-                  </p>
-                  <p className="text-xs text-blue-600 mt-0.5">
-                    Esperando procesamiento del agente
-                  </p>
-                </div>
-              </div>
+            ) : (
+              <>
+                {pending > 0 && (
+                  <div className="note note-warning">
+                    <Clock className="mt-0.5 h-4 w-4 shrink-0" />
+                    <div>
+                      <p className="font-semibold">
+                        {pending} sugerencia{pending !== 1 ? "s" : ""} por revisar
+                      </p>
+                      <p className="mt-0.5 text-xs opacity-80">
+                        Ve a Revisión para aprobar o rechazar
+                      </p>
+                    </div>
+                  </div>
+                )}
+                {(data.by_status["needs_review"] ?? 0) > 0 && (
+                  <div className="note note-info">
+                    <FileText className="mt-0.5 h-4 w-4 shrink-0" />
+                    <div>
+                      <p className="font-semibold">
+                        {data.by_status["needs_review"]} documento
+                        {(data.by_status["needs_review"] ?? 0) !== 1 ? "s" : ""} sin
+                        analizar
+                      </p>
+                      <p className="mt-0.5 text-xs opacity-80">
+                        Esperando procesamiento del agente
+                      </p>
+                    </div>
+                  </div>
+                )}
+              </>
             )}
           </div>
         </div>
       </div>
+
       {/* HU-32 — consumo de tokens y costo estimado */}
       <TokenUsagePanel />
-
     </div>
   );
 }

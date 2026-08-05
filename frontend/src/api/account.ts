@@ -162,10 +162,74 @@ export interface ChatAnswer {
   model: string | null;
   /** Documentos dentro del alcance de la búsqueda */
   searched_documents?: number;
+  /** Hilo donde quedó registrada (útil cuando se acaba de crear) */
+  conversation_id?: string | null;
 }
 
-export const askChat = (question: string, docIds?: string[]) =>
+export const askChat = (
+  question: string,
+  docIds?: string[],
+  conversationId?: string | null,
+) =>
   api.post<ChatAnswer>("/api/chat", {
     question,
     doc_ids: docIds && docIds.length > 0 ? docIds : undefined,
+    conversation_id: conversationId || undefined,
   });
+
+// ── Historial persistente del chat ───────────────────────────────────────────
+
+export interface ChatHistoryEntry {
+  id: string;
+  question: string;
+  answer: string;
+  has_context: boolean;
+  confidence: number;
+  sources: ChatSource[];
+  model: string | null;
+  created_at: string;
+}
+
+export interface ChatHistoryResponse {
+  items: ChatHistoryEntry[];
+  total: number;
+}
+
+export const getChatHistory = (params?: {
+  page?: number;
+  limit?: number;
+  conversation_id?: string;
+}) => api.get<ChatHistoryResponse>("/api/chat/history", { params });
+
+// ── Conversaciones (hilos) ───────────────────────────────────────────────────
+
+export interface Conversation {
+  id: string;
+  title: string;
+  document_id: string | null;
+  document_name: string | null;
+  message_count: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ConversationsResponse {
+  items: Conversation[];
+  total: number;
+}
+
+export const getConversations = (limit = 50) =>
+  api.get<ConversationsResponse>("/api/chat/conversations", {
+    params: { limit },
+  });
+
+export const createConversation = (payload: {
+  title?: string;
+  document_id?: string | null;
+}) => api.post<Conversation>("/api/chat/conversations", payload);
+
+export const renameConversation = (id: string, title: string) =>
+  api.patch<Conversation>(`/api/chat/conversations/${id}`, { title });
+
+export const deleteConversation = (id: string) =>
+  api.delete(`/api/chat/conversations/${id}`);

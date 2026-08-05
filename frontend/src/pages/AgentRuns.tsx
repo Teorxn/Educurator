@@ -20,17 +20,17 @@ const STATUS_BADGE: Record<
 > = {
   running: {
     label: "En ejecución",
-    color: "bg-blue-50 text-blue-700 border-blue-200",
+    color: "bg-info-soft text-info-fg border-transparent",
     icon: Loader2,
   },
   completed: {
     label: "Completada",
-    color: "bg-green-50 text-green-700 border-green-200",
+    color: "bg-success-soft text-success-fg border-transparent",
     icon: CheckCircle2,
   },
   failed: {
     label: "Fallida",
-    color: "bg-red-50 text-red-700 border-red-200",
+    color: "bg-danger-soft text-danger-fg border-transparent",
     icon: XCircle,
   },
 };
@@ -113,7 +113,7 @@ export default function AgentRuns() {
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center h-64 text-gray-400 gap-2">
+      <div className="flex items-center justify-center h-64 text-ink-3 gap-2">
         <RefreshCw className="w-5 h-5 animate-spin" />
         <span className="text-sm">Cargando ejecuciones...</span>
       </div>
@@ -124,7 +124,7 @@ export default function AgentRuns() {
     <div className="space-y-4">
       {/* Toolbar */}
       <div className="flex items-center justify-between flex-wrap gap-3">
-        <p className="text-sm text-gray-500">
+        <p className="text-sm text-ink-2">
           {runs.length} ejecuci{runs.length !== 1 ? "ones" : "ón"} registrada
           {runs.length !== 1 ? "s" : ""}
         </p>
@@ -133,8 +133,8 @@ export default function AgentRuns() {
             onClick={() => setShowGraph((v) => !v)}
             className={`flex items-center gap-2 text-sm font-medium px-4 py-2 rounded-lg border transition-colors ${
               showGraph
-                ? "bg-violet-50 text-violet-700 border-violet-300"
-                : "bg-white text-gray-600 border-gray-200 hover:border-violet-300"
+                ? "bg-brand-soft text-brand border-brand/40"
+                : "bg-surface text-ink-2 border-line hover:border-brand/40"
             }`}
           >
             <GitBranch className="w-4 h-4" />
@@ -143,7 +143,7 @@ export default function AgentRuns() {
           <button
             onClick={handleTrigger}
             disabled={triggering}
-            className="flex items-center gap-2 bg-violet-600 hover:bg-violet-700 disabled:bg-violet-300 text-white text-sm font-medium px-4 py-2 rounded-lg transition-colors"
+            className="btn btn-primary"
           >
             {triggering ? (
               <Loader2 className="w-4 h-4 animate-spin" />
@@ -158,56 +158,56 @@ export default function AgentRuns() {
       {showGraph && <AgentGraph />}
 
       {notice && (
-        <div className="text-sm text-violet-700 bg-violet-50 border border-violet-200 rounded-xl px-4 py-3">
+        <div className="text-sm text-brand bg-brand-soft border border-brand/40 rounded-xl px-4 py-3">
           {notice}
         </div>
       )}
 
       {runs.length === 0 ? (
         <div className="flex flex-col items-center justify-center h-64 text-center">
-          <div className="w-14 h-14 bg-gray-100 rounded-2xl flex items-center justify-center mb-4">
-            <Activity className="w-7 h-7 text-gray-400" />
+          <div className="w-14 h-14 bg-surface-2 rounded-2xl flex items-center justify-center mb-4">
+            <Activity className="w-7 h-7 text-ink-3" />
           </div>
-          <p className="text-gray-600 font-medium">Sin ejecuciones aún</p>
-          <p className="text-sm text-gray-400 mt-1">
+          <p className="text-ink-2 font-medium">Sin ejecuciones aún</p>
+          <p className="text-sm text-ink-3 mt-1">
             Sube un documento o dispara el análisis manualmente
           </p>
         </div>
       ) : (
-        <div className="bg-white rounded-xl border border-gray-200 overflow-x-auto">
+        <div className="card overflow-x-auto">
           <table className="w-full text-sm">
-            <thead className="bg-gray-50 border-b border-gray-100">
+            <thead className="bg-surface-2 border-b border-line">
               <tr>
-                <th className="px-4 py-3 text-left font-medium text-gray-600">
+                <th className="px-4 py-3 text-left font-medium text-ink-2">
                   Fecha
                 </th>
-                <th className="px-4 py-3 text-left font-medium text-gray-600">
+                <th className="px-4 py-3 text-left font-medium text-ink-2">
                   Estado
                 </th>
-                <th className="px-4 py-3 text-left font-medium text-gray-600">
+                <th className="px-4 py-3 text-left font-medium text-ink-2">
                   Duración
                 </th>
-                <th className="px-4 py-3 text-left font-medium text-gray-600">
+                <th className="px-4 py-3 text-left font-medium text-ink-2">
                   Docs
                 </th>
-                <th className="px-4 py-3 text-left font-medium text-gray-600">
+                <th className="px-4 py-3 text-left font-medium text-ink-2">
                   Sugerencias
                 </th>
-                <th className="px-4 py-3 text-left font-medium text-gray-600">
+                <th className="px-4 py-3 text-left font-medium text-ink-2">
                   Resumen
                 </th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-gray-50">
+            <tbody className="divide-y divide-line">
               {runs.map((run) => {
                 const badge = STATUS_BADGE[run.status] ?? STATUS_BADGE.running;
                 const Icon = badge.icon;
                 return (
                   <tr
                     key={run.thread_id}
-                    className="hover:bg-gray-50 transition-colors"
+                    className="hover:bg-surface-2 transition-colors"
                   >
-                    <td className="px-4 py-3 text-gray-600 text-xs whitespace-nowrap">
+                    <td className="px-4 py-3 text-ink-2 text-xs whitespace-nowrap">
                       {fmtDate(run.started_at)}
                     </td>
                     <td className="px-4 py-3">
@@ -223,19 +223,19 @@ export default function AgentRuns() {
                         {badge.label}
                       </span>
                     </td>
-                    <td className="px-4 py-3 text-gray-600 whitespace-nowrap">
+                    <td className="px-4 py-3 text-ink-2 whitespace-nowrap">
                       <span className="inline-flex items-center gap-1">
-                        <Clock className="w-3 h-3 text-gray-400" />
+                        <Clock className="w-3 h-3 text-ink-3" />
                         {fmtDuration(run.duration_seconds)}
                       </span>
                     </td>
-                    <td className="px-4 py-3 text-gray-600">
+                    <td className="px-4 py-3 text-ink-2">
                       {run.documents_processed}
                     </td>
-                    <td className="px-4 py-3 text-gray-600">
+                    <td className="px-4 py-3 text-ink-2">
                       {run.suggestions_generated}
                     </td>
-                    <td className="px-4 py-3 text-gray-500 text-xs">
+                    <td className="px-4 py-3 text-ink-2 text-xs">
                       <span className="inline-flex items-center gap-2">
                         {fmtSummary(run)}
                         {run.trace_url && (
@@ -243,7 +243,7 @@ export default function AgentRuns() {
                             href={run.trace_url}
                             target="_blank"
                             rel="noreferrer"
-                            className="text-violet-600 hover:text-violet-700"
+                            className="text-brand hover:text-brand-hover"
                             title="Ver traza en Langfuse"
                           >
                             <ExternalLink className="w-3 h-3" />

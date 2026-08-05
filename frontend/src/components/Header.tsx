@@ -1,28 +1,46 @@
 import { useEffect, useState } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
-import { LogOut, User, Menu, HelpCircle } from "lucide-react";
+import { LogOut, Menu, HelpCircle } from "lucide-react";
 import TutorialModal, { hasSeenTutorial } from "./TutorialModal";
-import { getMyProfile } from "../api/account";
+import ThemeToggle from "./ThemeToggle";
+import { useProfile, clearProfileCache } from "../useProfile";
 
-const TITLES: Record<string, string> = {
-  "/dashboard": "Inicio",
-  "/upload": "Subir documento",
-  "/docs": "Documentos",
-  "/review": "Revisión de sugerencias",
-  "/chat": "Preguntar a mis documentos",
-  "/logs": "Logs del agente",
-  "/agent-runs": "Ejecuciones del agente",
-  "/analytics": "Analytics",
-  "/reference-docs": "Documentos de referencia",
-  "/admin/users": "Administración de usuarios",
+const PAGES: Record<string, { title: string; subtitle: string }> = {
+  "/dashboard": {
+    title: "Inicio",
+    subtitle: "Estado general de tu base de conocimiento",
+  },
+  "/docs": {
+    title: "Documentos",
+    subtitle: "Material del curso y corpus de referencia",
+  },
+  "/review": {
+    title: "Revisión",
+    subtitle: "Aprueba o rechaza lo que propone el agente",
+  },
+  "/chat": {
+    title: "Preguntar",
+    subtitle: "Respuestas fundamentadas en tus documentos",
+  },
+  "/agent-runs": {
+    title: "Ejecuciones",
+    subtitle: "Historial de corridas del agente de curación",
+  },
+  "/analytics": {
+    title: "Métricas",
+    subtitle: "Actividad, resultados y consumo de IA",
+  },
+  "/admin/users": {
+    title: "Administración",
+    subtitle: "Usuarios, roles y auditoría de accesos",
+  },
 };
 
-function deriveTitle(pathname: string): string {
-  // Check exact match first
-  if (TITLES[pathname]) return TITLES[pathname];
-  // Dynamic routes
-  if (pathname.startsWith("/docs/")) return "Detalle del documento";
-  return "Dashboard";
+function derivePage(pathname: string) {
+  if (PAGES[pathname]) return PAGES[pathname];
+  if (pathname.startsWith("/docs/"))
+    return { title: "Documento", subtitle: "Contenido, fragmentos e historial" };
+  return { title: "EduCurator", subtitle: "" };
 }
 
 interface HeaderProps {
@@ -32,70 +50,92 @@ interface HeaderProps {
 export default function Header({ onMenuClick }: HeaderProps) {
   const navigate = useNavigate();
   const { pathname } = useLocation();
-  const title = deriveTitle(pathname);
+  const { title, subtitle } = derivePage(pathname);
+  const { profile } = useProfile();
 
   // HU-21 — tutorial accesible desde cualquier sección; se abre solo la
   // primera vez y recuerda si el usuario ya lo vio.
   const [tutorialOpen, setTutorialOpen] = useState(false);
-  const [displayName, setDisplayName] = useState("Instructor");
 
   useEffect(() => {
     if (!hasSeenTutorial()) setTutorialOpen(true);
-    getMyProfile()
-      .then(({ data }) => setDisplayName(data.full_name || data.email))
-      .catch(() => {});
   }, []);
 
   const handleLogout = () => {
     localStorage.removeItem("access_token");
+    clearProfileCache();
     navigate("/login");
   };
 
+  const displayName = profile?.full_name || profile?.email || "Instructor";
+  const initial = displayName.trim().charAt(0).toUpperCase() || "?";
+
   return (
-    <header className="h-14 border-b border-gray-200 bg-white flex items-center justify-between px-4 sm:px-6 shrink-0">
-      <div className="flex items-center gap-3">
-        {/* Hamburger — only visible on mobile */}
+    <header className="sticky top-0 z-10 flex h-16 shrink-0 items-center justify-between gap-4 border-b border-line bg-canvas/85 px-4 backdrop-blur-md sm:px-6">
+      <div className="flex min-w-0 items-center gap-3">
         <button
           onClick={onMenuClick}
-          className="sm:hidden p-1.5 rounded-md hover:bg-gray-100 text-gray-500 transition-colors"
+          className="btn-icon sm:hidden"
           aria-label="Abrir menú"
         >
-          <Menu className="w-5 h-5" />
+          <Menu className="h-5 w-5" />
         </button>
-        <h1 className="text-base font-semibold text-gray-800">{title}</h1>
+        <div className="min-w-0">
+          <h1 className="font-display truncate text-lg leading-tight font-semibold text-ink">
+            {title}
+          </h1>
+          {subtitle && (
+            <p className="hidden truncate text-xs text-ink-3 sm:block">
+              {subtitle}
+            </p>
+          )}
+        </div>
       </div>
 
-      <div className="flex items-center gap-3">
-        {/* HU-21 — acceso al tutorial desde cualquier sección */}
+      <div className="flex shrink-0 items-center gap-2">
+        <ThemeToggle />
+
         <button
           onClick={() => setTutorialOpen(true)}
           title="Ver tutorial de uso"
           aria-label="Ver tutorial de uso"
-          className="p-1.5 rounded-md hover:bg-gray-100 text-gray-400 hover:text-violet-600 transition-colors"
+          className="btn-icon"
         >
-          <HelpCircle className="w-4 h-4" />
+          <HelpCircle className="h-4 w-4" />
         </button>
-        <div className="flex items-center gap-2 text-sm text-gray-600">
-          <div className="w-7 h-7 rounded-full bg-violet-100 flex items-center justify-center">
-            <User className="w-3.5 h-3.5 text-violet-600" />
+
+        <div className="mx-1 hidden h-6 w-px bg-line sm:block" />
+
+        <div className="flex items-center gap-2.5">
+          <div
+            aria-hidden
+            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-brand-soft text-xs font-bold text-brand-soft-fg"
+          >
+            {initial}
           </div>
-          <span className="hidden sm:block max-w-[12rem] truncate">
-            {displayName}
-          </span>
+          <div className="hidden min-w-0 leading-tight sm:block">
+            <p className="max-w-[11rem] truncate text-xs font-semibold text-ink">
+              {displayName}
+            </p>
+            {profile && (
+              <p className="text-[11px] text-ink-3">
+                {profile.role === "admin" ? "Administrador" : "Docente"}
+              </p>
+            )}
+          </div>
         </div>
+
         <button
           onClick={handleLogout}
           title="Cerrar sesión"
-          className="p-1.5 rounded-md hover:bg-gray-100 text-gray-400 hover:text-gray-700 transition-colors"
+          aria-label="Cerrar sesión"
+          className="btn-icon"
         >
-          <LogOut className="w-4 h-4" />
+          <LogOut className="h-4 w-4" />
         </button>
       </div>
 
-      <TutorialModal
-        open={tutorialOpen}
-        onClose={() => setTutorialOpen(false)}
-      />
+      <TutorialModal open={tutorialOpen} onClose={() => setTutorialOpen(false)} />
     </header>
   );
 }

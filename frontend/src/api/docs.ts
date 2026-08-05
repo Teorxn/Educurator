@@ -22,6 +22,7 @@ export interface Document {
   size_bytes: number;
   error_message?: string | null;
   uploaded_by?: string | null;
+  uploader_email?: string | null;
 }
 
 export interface DocsResponse {

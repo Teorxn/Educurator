@@ -34,7 +34,7 @@ export default function TokenUsagePanel() {
 
   if (loading) {
     return (
-      <div className="bg-white rounded-xl border border-gray-200 p-6 flex items-center justify-center gap-2 text-gray-400">
+      <div className="card p-6 flex items-center justify-center gap-2 text-ink-3">
         <Loader2 className="w-4 h-4 animate-spin" />
         <span className="text-sm">Cargando consumo de IA...</span>
       </div>
@@ -50,14 +50,14 @@ export default function TokenUsagePanel() {
   const models = Object.entries(data.by_model);
 
   return (
-    <div className="bg-white rounded-xl border border-gray-200 p-5 space-y-5">
+    <div className="card p-5 space-y-5">
       <div className="flex items-center justify-between flex-wrap gap-2">
-        <h2 className="text-sm font-semibold text-gray-800 flex items-center gap-2">
-          <Cpu className="w-4 h-4 text-violet-500" />
+        <h2 className="text-sm font-semibold text-ink flex items-center gap-2">
+          <Cpu className="w-4 h-4 text-brand" />
           Consumo de IA
         </h2>
         <span
-          className="inline-flex items-center gap-1 text-xs text-gray-400"
+          className="inline-flex items-center gap-1 text-xs text-ink-3"
           title={`Tarifas: $${data.rates.input_per_1k}/1k entrada · $${data.rates.output_per_1k}/1k salida`}
         >
           <Info className="w-3 h-3" />
@@ -67,41 +67,41 @@ export default function TokenUsagePanel() {
 
       {/* KPIs */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-        <div className="border border-gray-100 rounded-lg p-3">
-          <p className="text-xs text-gray-500 mb-1">Tokens totales</p>
-          <p className="text-xl font-semibold text-gray-900">
+        <div className="border border-line rounded-lg p-3">
+          <p className="text-xs text-ink-2 mb-1">Tokens totales</p>
+          <p className="text-xl font-semibold text-ink">
             {fmtNumber(data.total_tokens)}
           </p>
-          <p className="text-[11px] text-gray-400 mt-0.5">
+          <p className="text-[11px] text-ink-3 mt-0.5">
             {fmtNumber(data.input_tokens)} in · {fmtNumber(data.output_tokens)}{" "}
             out
           </p>
         </div>
-        <div className="border border-gray-100 rounded-lg p-3">
-          <p className="text-xs text-gray-500 mb-1">Costo estimado</p>
-          <p className="text-xl font-semibold text-gray-900">
+        <div className="border border-line rounded-lg p-3">
+          <p className="text-xs text-ink-2 mb-1">Costo estimado</p>
+          <p className="text-xl font-semibold text-ink">
             {fmtUsd(data.total_cost_usd)}
           </p>
-          <p className="text-[11px] text-gray-400 mt-0.5">
+          <p className="text-[11px] text-ink-3 mt-0.5">
             {data.calls} llamada{data.calls !== 1 ? "s" : ""} al modelo
           </p>
         </div>
-        <div className="border border-gray-100 rounded-lg p-3">
-          <p className="text-xs text-gray-500 mb-1">Último análisis</p>
-          <p className="text-xl font-semibold text-gray-900">
+        <div className="border border-line rounded-lg p-3">
+          <p className="text-xs text-ink-2 mb-1">Último análisis</p>
+          <p className="text-xl font-semibold text-ink">
             {fmtNumber(data.last_run.total_tokens)}
           </p>
-          <p className="text-[11px] text-gray-400 mt-0.5">
+          <p className="text-[11px] text-ink-3 mt-0.5">
             {fmtUsd(data.last_run.cost_usd)}
           </p>
         </div>
-        <div className="border border-gray-100 rounded-lg p-3">
-          <p className="text-xs text-gray-500 mb-1">Modelo</p>
-          <p className="text-sm font-semibold text-gray-900 truncate">
+        <div className="border border-line rounded-lg p-3">
+          <p className="text-xs text-ink-2 mb-1">Modelo</p>
+          <p className="text-sm font-semibold text-ink truncate">
             {models.length > 0 ? models[0][0] : "—"}
           </p>
           {models.length > 1 && (
-            <p className="text-[11px] text-gray-400 mt-0.5">
+            <p className="text-[11px] text-ink-3 mt-0.5">
               +{models.length - 1} más
             </p>
           )}
@@ -111,27 +111,34 @@ export default function TokenUsagePanel() {
       {/* Gráfico diario */}
       {data.daily.length > 0 && (
         <div>
-          <p className="text-xs font-medium text-gray-600 mb-2 flex items-center gap-1.5">
-            <TrendingUp className="w-3.5 h-3.5 text-gray-400" />
+          <p className="text-xs font-medium text-ink-2 mb-2 flex items-center gap-1.5">
+            <TrendingUp className="w-3.5 h-3.5 text-ink-3" />
             Tokens por día
           </p>
-          <div className="flex items-end gap-1 h-24">
+          {/* Una sola serie ⇒ un solo color. El área de contacto ocupa toda la
+              altura de la columna aunque la barra sea baja, para que el tooltip
+              no exija apuntar a unos pocos píxeles. */}
+          <div className="flex h-24 items-end gap-[2px]">
             {data.daily.map((d) => (
               <div
                 key={d.date}
-                className="flex-1 bg-violet-100 hover:bg-violet-200 rounded-t transition-colors relative group"
-                style={{
-                  height: `${Math.max(4, (d.tokens / maxDaily) * 100)}%`,
-                }}
+                className="group flex h-full flex-1 cursor-default items-end"
                 title={`${d.date}: ${fmtNumber(d.tokens)} tokens (${fmtUsd(d.cost_usd)})`}
               >
-                <span className="sr-only">
-                  {d.date}: {d.tokens} tokens
-                </span>
+                <div
+                  className="w-full rounded-t bg-chart transition-[height,opacity] duration-500 group-hover:opacity-80"
+                  style={{
+                    height: `${Math.max(3, (d.tokens / maxDaily) * 100)}%`,
+                  }}
+                >
+                  <span className="sr-only">
+                    {d.date}: {d.tokens} tokens
+                  </span>
+                </div>
               </div>
             ))}
           </div>
-          <div className="flex justify-between text-[11px] text-gray-400 mt-1">
+          <div className="flex justify-between text-[11px] text-ink-3 mt-1">
             <span>{data.daily[0]?.date}</span>
             <span>{data.daily[data.daily.length - 1]?.date}</span>
           </div>
@@ -141,8 +148,8 @@ export default function TokenUsagePanel() {
       {/* Desglose por operación */}
       {operations.length > 0 && (
         <div>
-          <p className="text-xs font-medium text-gray-600 mb-2 flex items-center gap-1.5">
-            <Coins className="w-3.5 h-3.5 text-gray-400" />
+          <p className="text-xs font-medium text-ink-2 mb-2 flex items-center gap-1.5">
+            <Coins className="w-3.5 h-3.5 text-ink-3" />
             Por tipo de operación
           </p>
           <div className="space-y-1.5">
@@ -152,16 +159,16 @@ export default function TokenUsagePanel() {
                 : 0;
               return (
                 <div key={op} className="flex items-center gap-3">
-                  <span className="text-xs text-gray-600 w-48 shrink-0 truncate">
+                  <span className="text-xs text-ink-2 w-48 shrink-0 truncate">
                     {OPERATION_LABEL[op] ?? op}
                   </span>
-                  <div className="flex-1 bg-gray-100 rounded-full h-2 overflow-hidden">
+                  <div className="h-2 flex-1 overflow-hidden rounded-full bg-chart-track">
                     <div
-                      className="bg-violet-500 h-2 rounded-full"
-                      style={{ width: `${pct}%` }}
+                      className="h-2 rounded-full bg-chart"
+                      style={{ width: `${Math.max(pct, v.tokens > 0 ? 2 : 0)}%` }}
                     />
                   </div>
-                  <span className="text-xs text-gray-500 w-28 text-right shrink-0">
+                  <span className="tnum w-28 shrink-0 text-right text-xs text-ink-2">
                     {fmtNumber(v.tokens)} · {fmtUsd(v.cost_usd)}
                   </span>
                 </div>
@@ -172,7 +179,7 @@ export default function TokenUsagePanel() {
       )}
 
       {data.total_tokens === 0 && (
-        <p className="text-sm text-gray-400 text-center py-2">
+        <p className="text-sm text-ink-3 text-center py-2">
           Aún no hay consumo registrado. Sube un documento para que el agente lo
           analice.
         </p>
