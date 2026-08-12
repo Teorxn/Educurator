@@ -5,7 +5,6 @@ import {
   CheckCircle2,
   Clock,
   FileText,
-  Loader2,
   Upload,
   AlertCircle,
   TrendingUp,
@@ -14,6 +13,8 @@ import {
 import { getDashboard } from "../api/account";
 import type { DashboardData } from "../api/account";
 import DocBadge from "../components/DocBadge";
+import Skeleton, { LoadingLabel } from "../components/Skeleton";
+import { keepIfSame } from "../lib/sameData";
 
 function fmtDate(d: string | null) {
   if (!d) return "—";
@@ -64,7 +65,8 @@ export default function Dashboard() {
   const load = async (first = false) => {
     try {
       const { data } = await getDashboard();
-      setData(data);
+      // Un sondeo sin novedades no debe repintar el panel entero.
+      setData((prev) => keepIfSame(prev, data));
       setError("");
     } catch {
       if (first) setError("No se pudo cargar el panel.");
@@ -83,11 +85,34 @@ export default function Dashboard() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Mientras llega la respuesta se dibuja la misma retícula que va a ocupar el
+  // panel: al llegar los datos sólo cambia el contenido de las cajas, no la
+  // altura de la página.
   if (loading) {
     return (
-      <div className="flex h-64 items-center justify-center gap-2 text-ink-3">
-        <Loader2 className="h-5 w-5 animate-spin" />
-        <span className="text-sm">Cargando panel...</span>
+      <div className="mx-auto max-w-6xl space-y-5">
+        <LoadingLabel>Cargando panel</LoadingLabel>
+        <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+          {Array.from({ length: 4 }).map((_, i) => (
+            <div key={i} className="card p-4">
+              <div className="flex items-center gap-2">
+                <Skeleton className="h-7 w-7 rounded-lg" />
+                <Skeleton className="h-3 w-20" />
+              </div>
+              <Skeleton className="mt-3 h-8 w-16" />
+            </div>
+          ))}
+        </div>
+        <div className="grid gap-4 lg:grid-cols-2">
+          {Array.from({ length: 2 }).map((_, i) => (
+            <section key={i} className="card space-y-3 p-4">
+              <Skeleton className="h-4 w-40" />
+              {Array.from({ length: 4 }).map((_, r) => (
+                <Skeleton key={r} className="h-9 w-full" />
+              ))}
+            </section>
+          ))}
+        </div>
       </div>
     );
   }

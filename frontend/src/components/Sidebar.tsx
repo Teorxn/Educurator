@@ -17,6 +17,8 @@ interface NavItem {
   label: string;
   /** Sólo visible para administradores. */
   adminOnly?: boolean;
+  /** Ancla para el recorrido guiado (ver `TutorialModal`). */
+  tour?: string;
 }
 
 interface NavGroup {
@@ -33,7 +35,7 @@ const NAV: NavGroup[] = [
   {
     title: "Curación",
     items: [
-      { to: "/docs", icon: FileText, label: "Documentos" },
+      { to: "/docs", icon: FileText, label: "Documentos", tour: "nav-docs" },
       { to: "/review", icon: CheckSquare, label: "Revisión" },
       { to: "/chat", icon: MessageSquare, label: "Preguntar" },
     ],
@@ -42,7 +44,7 @@ const NAV: NavGroup[] = [
     title: "Seguimiento",
     items: [
       { to: "/agent-runs", icon: Activity, label: "Ejecuciones" },
-      { to: "/analytics", icon: BarChart3, label: "Métricas" },
+      { to: "/analytics", icon: BarChart3, label: "Métricas", tour: "nav-analytics" },
       { to: "/admin/users", icon: Shield, label: "Administración", adminOnly: true },
     ],
   },
@@ -100,10 +102,11 @@ export default function Sidebar({ onClose }: SidebarProps) {
                 </p>
               )}
               <div className="space-y-0.5">
-                {items.map(({ to, icon: Icon, label }) => (
+                {items.map(({ to, icon: Icon, label, tour }) => (
                   <NavLink
                     key={to}
                     to={to}
+                    data-tour={tour}
                     onClick={onClose}
                     className={({ isActive }) =>
                       `relative flex items-center gap-3 rounded-field px-3 py-2 text-sm font-medium transition-colors ${

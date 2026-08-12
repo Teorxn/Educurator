@@ -1,0 +1,42 @@
+MÓDULO 1 — FUNDAMENTOS DE HTML Y CSS
+Desarrollo Web Full Stack — ISW-3041
+
+OBJETIVOS DEL MÓDULO
+Al terminar este módulo el estudiante construye páginas web estáticas
+accesibles y con una hoja de estilos mantenible. Este módulo representa
+el 15% de la nota final del curso.
+
+1. ESTRUCTURA DE UN DOCUMENTO HTML
+HTML es el lenguaje de marcado que da estructura al contenido de una
+página. Un documento se organiza en una jerarquía de elementos: la
+cabecera (head), que contiene los metadatos, y el cuerpo (body), que
+contiene lo que el usuario ve.
+
+Trabajaremos con HTML5 y CSS3, que son la última versión de ambos
+estándares publicada en 2019.
+
+2. ELEMENTOS SEMÁNTICOS
+El marcado semántico usa elementos que describen el papel del contenido
+en lugar de su apariencia: header, nav, main, article, section, aside y
+footer. Un lector de pantalla se apoya en esos elementos para permitir
+que el usuario navegue la página por regiones.
+
+3. EL MODELO DE CAJA
+Todo elemento se representa como una caja rectangular compuesta por el
+contenido, el relleno (padding), el borde y el margen. Comprender cómo se
+suman esas cuatro zonas es lo que evita la mayoría de los problemas de
+maquetación.
+
+4. DISPOSICIÓN CON FLEXBOX
+Flexbox distribuye el espacio disponible entre los elementos de un
+contenedor a lo largo de un eje principal. Es la herramienta adecuada
+para disposiciones de una sola dimensión.
+
+5. ACCESIBILIDAD
+Toda imagen que aporte información lleva un texto alternativo. El
+contraste entre el texto y su fondo debe alcanzar una relación de 4.5:1
+para texto normal.
+
+6. EVALUACIÓN DEL MÓDULO
+El módulo se evalúa con dos talleres y un quiz. En conjunto representan
+el 20% de la nota final del curso.

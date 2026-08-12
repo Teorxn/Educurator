@@ -1,6 +1,5 @@
 import { useEffect, useState } from "react";
 import {
-  Loader2,
   ShieldCheck,
   AlertCircle,
   UserX,
@@ -18,6 +17,7 @@ import {
   listUsers,
 } from "../api/account";
 import type { AdminUser, Role, RoleAuditEntry } from "../api/account";
+import Skeleton, { SkeletonTable, LoadingLabel } from "../components/Skeleton";
 
 function fmtDate(d: string) {
   return new Intl.DateTimeFormat("es", {
@@ -131,9 +131,14 @@ export default function AdminUsers() {
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center h-64 text-ink-3 gap-2">
-        <Loader2 className="w-5 h-5 animate-spin" />
-        <span className="text-sm">Cargando administración...</span>
+      <div className="space-y-5">
+        <LoadingLabel>Cargando administración</LoadingLabel>
+        <div className="card overflow-hidden">
+          <div className="border-b border-line px-5 py-4">
+            <Skeleton className="h-4 w-40" />
+          </div>
+          <SkeletonTable rows={5} cols={["w-1/3", "w-24", "w-20", "w-16"]} />
+        </div>
       </div>
     );
   }

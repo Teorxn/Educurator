@@ -1,0 +1,50 @@
+CRONOGRAMA DE SESIONES
+Desarrollo Web Full Stack — ISW-3041 — Semestre 2026-1
+
+SEMANA 1 — Presentación del curso y del proyecto transversal
+Lectura previa: syllabus completo. Quiz 1 al final de la sesión.
+
+SEMANA 2 — HTML: estructura y elementos semánticos
+Taller 1: maquetar la portada del proyecto. Entrega: domingo 23:59.
+
+SEMANA 3 — CSS: modelo de caja y selectores
+Taller 2: hoja de estilos de la portada. Entrega: domingo 23:59.
+
+SEMANA 4 — CSS: disposición con Flexbox y Grid
+Taller 3: disposición responsiva. Entrega: domingo 23:59.
+
+SEMANA 5 — Accesibilidad y validación
+Primer corte del proyecto: interfaz estática navegable.
+
+SEMANA 6 — JavaScript: variables, funciones y control de flujo
+Taller 4. Quiz 2.
+
+SEMANA 7 — JavaScript: manipulación del DOM y eventos
+Taller 5: la portada responde a la interacción del usuario.
+
+SEMANA 8 — EXAMEN PARCIAL
+Cubre los módulos 1 y 2. Duración: dos horas. Sin material de consulta.
+
+SEMANA 9 — Asincronía: promesas y async/await
+Taller 6: consumo de un servicio HTTP público.
+
+SEMANA 10 — Servicios HTTP: diseño de una API
+Segundo corte del proyecto: la aplicación consume datos reales.
+
+SEMANA 11 — Bases de datos relacionales: modelado
+Taller 7: modelo entidad-relación del proyecto.
+
+SEMANA 12 — Bases de datos: consultas y persistencia
+Taller 8: consultas sobre el modelo del proyecto.
+
+SEMANA 13 — Autenticación y manejo de sesiones
+Taller 9. Quiz 3.
+
+SEMANA 14 — Despliegue en producción
+Taller 10: la aplicación queda publicada y accesible.
+
+SEMANA 15 — Sustentación del proyecto final
+Entrega del tercer corte y sustentación oral de 15 minutos.
+
+SEMANA 16 — Retroalimentación y cierre
+Publicación de notas definitivas.

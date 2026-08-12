@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { FormEvent } from "react";
+import { useNavigate } from "react-router-dom";
 import {
   Send,
   Loader2,
@@ -8,6 +9,7 @@ import {
   ChevronUp,
   FileText,
   AlertCircle,
+  ArrowRight,
   Sparkles,
   HelpCircle,
   Plus,
@@ -27,6 +29,7 @@ import {
 import type { ChatAnswer, Conversation } from "../api/account";
 import { getDocs, getSuggestions } from "../api/docs";
 import type { Document, Suggestion } from "../api/docs";
+import ConfirmDialog from "../components/ConfirmDialog";
 
 interface Turn {
   id: string;
@@ -57,6 +60,55 @@ function analyzedDocs(documents: Document[]): Document[] {
     (d) => d.status === "analyzed" || d.status === "approved",
   );
 }
+
+/** Documentos que aún están en la cola del agente: pronto serán consultables. */
+function pendingDocs(documents: Document[]): Document[] {
+  return documents.filter(
+    (d) =>
+      d.status === "queued" ||
+      d.status === "processing" ||
+      d.status === "needs_review",
+  );
+}
+
+/**
+ * Por qué no se puede preguntar todavía.
+ *
+ * El chat responde SÓLO con lo que hay indexado: sin documentos analizados no
+ * tiene de dónde sacar una respuesta, así que en vez de dejar preguntar para
+ * contestar «no encontré información» —que suena a que la pregunta está mal—
+ * se bloquea la entrada y se explica qué falta.
+ */
+type ChatBlock = "sin-documentos" | "procesando" | "sin-analizar" | null;
+
+function chatBlock(documents: Document[], loading: boolean): ChatBlock {
+  if (loading) return null;
+  if (analyzedDocs(documents).length > 0) return null;
+  if (documents.length === 0) return "sin-documentos";
+  if (pendingDocs(documents).length > 0) return "procesando";
+  return "sin-analizar";
+}
+
+const BLOCK_COPY: Record<
+  Exclude<ChatBlock, null>,
+  { title: string; body: string; cta: string }
+> = {
+  "sin-documentos": {
+    title: "Aún no tienes documentos que consultar",
+    body: "El chat responde únicamente con el contenido de tu material, así que necesita al menos un documento analizado.",
+    cta: "Subir documentos",
+  },
+  procesando: {
+    title: "El agente está analizando tu material",
+    body: "En cuanto termine de procesar los documentos podrás preguntarle. Suele tardar poco; el estado se ve en «Documentos».",
+    cta: "Ver el estado",
+  },
+  "sin-analizar": {
+    title: "Ninguno de tus documentos se pudo analizar",
+    body: "Tienes documentos subidos, pero ninguno quedó indexado. Revisa su estado y reintenta el análisis para poder preguntar sobre ellos.",
+    cta: "Revisar documentos",
+  },
+};
 
 /**
  * Preguntas sugeridas GENÉRICAS a partir de los documentos ya analizados.
@@ -120,10 +172,12 @@ function fmtDateTime(d: string) {
 
 /** HU-31 — Consultar información mediante lenguaje natural (RAG con fuentes). */
 export default function Chat() {
+  const navigate = useNavigate();
   const [turns, setTurns] = useState<Turn[]>([]);
   const [question, setQuestion] = useState("");
   const [sending, setSending] = useState(false);
   const [documents, setDocuments] = useState<Document[]>([]);
+  const [docsLoading, setDocsLoading] = useState(true);
   const [docFilter, setDocFilter] = useState<string>("");
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   const [faqSuggestions, setFaqSuggestions] = useState<Suggestion[] | null>(null);
@@ -147,6 +201,15 @@ export default function Chat() {
       ? buildFaqSuggestions(faqSuggestions, documents)
       : buildGenericSuggestions(documents);
 
+  const block = chatBlock(documents, docsLoading);
+  const canAsk = block === null && !docsLoading;
+  // El selector sólo ofrece lo que de verdad se puede consultar; si el hilo
+  // abierto apunta a otro documento, se conserva su opción para no dejar el
+  // desplegable en blanco.
+  const scopeOptions = analyzedDocs(documents);
+  const activeScopeMissing =
+    docFilter !== "" && !scopeOptions.some((d) => d.id === docFilter);
+
   const loadConversations = useCallback(async () => {
     try {
       const { data } = await getConversations();
@@ -162,7 +225,8 @@ export default function Chat() {
     // corpus de referencia; el selector debe reflejar el mismo alcance
     getDocs({ limit: 100, category: "all" })
       .then(({ data }) => setDocuments(data.items))
-      .catch(() => {});
+      .catch(() => {})
+      .finally(() => setDocsLoading(false));
 
     // HU-31 — preguntas predeterminadas dinámicas: FAQs reales ya aprobadas
     getSuggestions({ type: "faq", status: "approved", limit: 6 })
@@ -200,6 +264,7 @@ export default function Chat() {
             confidence: m.confidence,
             has_context: m.has_context,
             model: m.model,
+            searched_documents: m.searched_documents,
           },
         })),
       );
@@ -244,7 +309,7 @@ export default function Chat() {
 
   const ask = async (text: string, forceDocId?: string) => {
     const q = text.trim();
-    if (!q || sending) return;
+    if (!q || sending || !canAsk) return;
 
     turnSeq.current += 1;
     const id = `turn-${turnSeq.current}`;
@@ -350,24 +415,6 @@ export default function Chat() {
                               <Check className="h-3 w-3" />
                             </button>
                           </div>
-                        ) : confirmDelete === c.id ? (
-                          <div className="flex items-center gap-1.5 rounded-field bg-danger-soft px-2 py-1.5">
-                            <span className="flex-1 text-[11px] text-danger-fg">
-                              ¿Eliminar?
-                            </span>
-                            <button
-                              onClick={() => handleDelete(c.id)}
-                              className="text-[11px] font-bold text-danger-fg hover:underline"
-                            >
-                              Sí
-                            </button>
-                            <button
-                              onClick={() => setConfirmDelete(null)}
-                              className="text-[11px] text-ink-2 hover:underline"
-                            >
-                              No
-                            </button>
-                          </div>
                         ) : (
                           <div
                             className={`group flex items-center gap-1 rounded-field px-2 py-1.5 transition-colors ${
@@ -460,7 +507,7 @@ export default function Chat() {
             id="docFilter"
             value={docFilter}
             onChange={(e) => setDocFilter(e.target.value)}
-            disabled={activeId !== null}
+            disabled={activeId !== null || !canAsk}
             title={
               activeId !== null
                 ? "El alcance queda fijado al abrir la conversación. Empieza una nueva para cambiarlo."
@@ -469,7 +516,12 @@ export default function Chat() {
             className="input max-w-xs py-1.5 text-xs"
           >
             <option value="">Todos mis documentos</option>
-            {documents.map((d) => (
+            {activeScopeMissing && (
+              <option value={docFilter}>
+                {activeConversation?.document_name ?? "Documento del hilo"}
+              </option>
+            )}
+            {scopeOptions.map((d) => (
               <option key={d.id} value={d.id}>
                 {d.filename}
               </option>
@@ -513,13 +565,10 @@ export default function Chat() {
                 siempre citan el documento y fragmento de origen.
               </p>
 
-              {suggestions.length === 0 ? (
-                <p className="mt-5 max-w-md text-sm text-ink-2">
-                  Aún no hay documentos analizados que consultar. Sube material
-                  desde «Documentos» y, cuando el agente termine de analizarlo,
-                  podrás preguntarle.
-                </p>
-              ) : (
+              {/* Cuando el chat está bloqueado, el aviso de encima de la
+                  entrada ya explica por qué y lleva a Documentos: repetir el
+                  mismo texto aquí sólo añadiría ruido. */}
+              {block || suggestions.length === 0 ? null : (
                 <>
                   <p className="mt-5 flex items-center gap-1.5 text-xs text-ink-3">
                     {faqSuggestions && faqSuggestions.length > 0 ? (
@@ -661,22 +710,45 @@ export default function Chat() {
         </div>
 
         {/* Entrada */}
-        <form onSubmit={onSubmit} className="mt-4 flex items-center gap-2">
+        {block && (
+          <div className="note note-warning mt-4" role="status">
+            <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+            <span className="min-w-0">
+              <span className="font-semibold">{BLOCK_COPY[block].title}.</span>{" "}
+              {BLOCK_COPY[block].body}
+            </span>
+            <button
+              onClick={() => navigate("/docs")}
+              className="btn btn-sm btn-secondary ml-auto shrink-0"
+            >
+              {BLOCK_COPY[block].cta}
+              <ArrowRight className="h-3.5 w-3.5" />
+            </button>
+          </div>
+        )}
+
+        <form
+          onSubmit={onSubmit}
+          data-tour="chat-input"
+          className="mt-4 flex items-center gap-2"
+        >
           <input
             value={question}
             onChange={(e) => setQuestion(e.target.value)}
             placeholder={
-              activeConversation
-                ? `Seguir en «${activeConversation.title.slice(0, 30)}»...`
-                : "Escribe tu pregunta..."
+              block
+                ? "Necesitas un documento analizado para preguntar"
+                : activeConversation
+                  ? `Seguir en «${activeConversation.title.slice(0, 30)}»...`
+                  : "Escribe tu pregunta..."
             }
-            disabled={sending}
+            disabled={sending || !canAsk}
             aria-label="Pregunta"
             className="input flex-1 rounded-full px-4 py-2.5"
           />
           <button
             type="submit"
-            disabled={!question.trim() || sending}
+            disabled={!question.trim() || sending || !canAsk}
             className="btn btn-primary h-11 w-11 shrink-0 rounded-full p-0"
             aria-label="Enviar pregunta"
           >
@@ -693,6 +765,15 @@ export default function Chat() {
           </p>
         )}
       </div>
+
+      <ConfirmDialog
+        open={confirmDelete !== null}
+        title="¿Eliminar esta conversación?"
+        description="Se borrarán todas sus preguntas y respuestas. Esta acción no se puede deshacer."
+        itemName={conversations.find((c) => c.id === confirmDelete)?.title}
+        onConfirm={() => confirmDelete && handleDelete(confirmDelete)}
+        onCancel={() => setConfirmDelete(null)}
+      />
     </div>
   );
 }

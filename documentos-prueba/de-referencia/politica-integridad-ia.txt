@@ -1,0 +1,27 @@
+POLÍTICA DE INTEGRIDAD ACADÉMICA Y USO DE INTELIGENCIA ARTIFICIAL
+Documento VA-IA-001 — Vigente desde 2026-1
+
+1. ALCANCE
+Esta política aplica a todos los trabajos, talleres, proyectos y
+evaluaciones de pregrado.
+
+2. USO DE HERRAMIENTAS DE INTELIGENCIA ARTIFICIAL
+2.1. El uso de asistentes de inteligencia artificial generativa está
+     PERMITIDO en los trabajos académicos, siempre que se declare.
+2.2. La declaración se incluye al final del trabajo e indica: qué
+     herramienta se usó, para qué parte del trabajo y en qué medida.
+2.3. El estudiante es responsable del contenido que entrega, incluida la
+     verificación de cualquier dato producido por la herramienta.
+2.4. Está prohibido presentar como propia una producción íntegramente
+     generada por una herramienta sin aporte ni revisión del estudiante.
+
+3. PLAGIO
+3.1. Se considera plagio reproducir texto ajeno sin atribución, con
+     independencia de su origen.
+3.2. El plagio comprobado implica la calificación de cero (0.0) en la
+     actividad y el reporte al Comité de Asuntos Estudiantiles.
+
+4. COLABORACIÓN
+4.1. Salvo indicación expresa del docente, los trabajos son individuales.
+4.2. Discutir ideas con compañeros es aceptable; compartir código o texto
+     para su entrega no lo es.

@@ -1,11 +1,12 @@
 import { useState } from 'react'
-import { Outlet, Navigate } from 'react-router-dom'
+import { Outlet, Navigate, useLocation } from 'react-router-dom'
 import Sidebar from '../components/Sidebar'
 import Header from '../components/Header'
 
 export default function DashboardLayout() {
   const token = localStorage.getItem('access_token')
   const [sidebarOpen, setSidebarOpen] = useState(false)
+  const { pathname } = useLocation()
 
   if (!token) return <Navigate to="/login" replace />
 
@@ -30,7 +31,10 @@ export default function DashboardLayout() {
 
       <div className="flex min-w-0 flex-1 flex-col">
         <Header onMenuClick={() => setSidebarOpen((v) => !v)} />
-        <main className="flex-1 px-4 py-6 sm:px-6">
+        {/* La clave por ruta reinicia la aparición en cada navegación: el
+            contenido entra con una transición corta en vez de aparecer de
+            golpe con el cambio de altura de la página. */}
+        <main key={pathname} className="anim-fade-in flex-1 px-4 py-6 sm:px-6">
           <Outlet />
         </main>
       </div>

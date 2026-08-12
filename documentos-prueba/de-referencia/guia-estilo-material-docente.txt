@@ -1,0 +1,30 @@
+GUÍA DE ESTILO DEL MATERIAL DOCENTE
+Centro de Innovación Educativa — Documento CIE-GE-002
+
+1. IDIOMA Y TERMINOLOGÍA
+1.1. El material se redacta en español.
+1.2. Cada concepto técnico se nombra SIEMPRE de la misma forma dentro de
+     un mismo curso. Si un concepto tiene varios nombres posibles, se
+     elige uno en la primera sesión y se mantiene en todo el material.
+1.3. Cuando exista un equivalente en español de uso extendido, se prefiere
+     sobre el anglicismo. El término en inglés puede indicarse una única
+     vez, entre paréntesis, la primera vez que aparece el concepto.
+1.4. No se deben usar como sinónimos términos que designan cosas
+     distintas (por ejemplo, "propiedad" y "atributo").
+
+2. VERSIONES DE HERRAMIENTAS
+2.1. Toda mención a una versión de un lenguaje, biblioteca o entorno de
+     ejecución debe indicar el año o semestre de referencia.
+2.2. Las expresiones "última versión", "versión actual" o "reciente" no
+     deben usarse sin acompañarlas del número de versión concreto, porque
+     envejecen mal.
+
+3. ESTRUCTURA
+3.1. Cada documento comienza con sus objetivos de aprendizaje.
+3.2. La información normativa (fechas, pesos, políticas) vive en UN solo
+     documento del curso. El resto del material la referencia, no la
+     copia, para que no queden versiones divergentes.
+
+4. EXTENSIÓN
+4.1. Las unidades de contenido no superan las 2.000 palabras. Los temas
+     más extensos se dividen.

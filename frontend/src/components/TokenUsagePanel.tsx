@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
-import { Coins, Cpu, Loader2, TrendingUp, Info } from "lucide-react";
+import { Coins, Cpu, TrendingUp, Info } from "lucide-react";
 import { getTokenAnalytics } from "../api/account";
 import type { TokenAnalytics } from "../api/account";
+import Skeleton, { LoadingLabel } from "./Skeleton";
 
 const OPERATION_LABEL: Record<string, string> = {
   faq_generation: "Generación de FAQs",
@@ -32,11 +33,27 @@ export default function TokenUsagePanel() {
       .finally(() => setLoading(false));
   }, []);
 
+  // El hueco tiene la altura del panel completo: si fuera una tarjeta pequeña,
+  // el resto de la página daría un salto al llegar los datos.
   if (loading) {
     return (
-      <div className="card p-6 flex items-center justify-center gap-2 text-ink-3">
-        <Loader2 className="w-4 h-4 animate-spin" />
-        <span className="text-sm">Cargando consumo de IA...</span>
+      <div className="card space-y-5 p-5">
+        <LoadingLabel>Cargando consumo de IA</LoadingLabel>
+        <Skeleton className="h-4 w-40" />
+        <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+          {Array.from({ length: 4 }).map((_, i) => (
+            <div key={i} className="space-y-2 rounded-lg border border-line p-3">
+              <Skeleton className="h-3 w-20" />
+              <Skeleton className="h-6 w-16" />
+            </div>
+          ))}
+        </div>
+        <Skeleton className="h-24 w-full" />
+        <div className="space-y-1.5">
+          {Array.from({ length: 3 }).map((_, i) => (
+            <Skeleton key={i} className="h-2 w-full" />
+          ))}
+        </div>
       </div>
     );
   }

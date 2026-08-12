@@ -3,7 +3,6 @@ import { useParams, useNavigate } from "react-router-dom";
 import {
   ArrowLeft,
   FileText,
-  RefreshCw,
   Clock,
   HardDrive,
   Hash,
@@ -17,6 +16,9 @@ import {
   User as UserIcon,
 } from "lucide-react";
 import DocBadge from "../components/DocBadge";
+import ConfirmDialog from "../components/ConfirmDialog";
+import Tabs from "../components/Tabs";
+import Skeleton, { LoadingLabel } from "../components/Skeleton";
 import {
   getDoc,
   getDocContent,
@@ -171,9 +173,26 @@ export default function DocDetail() {
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center h-64 text-ink-3 gap-2">
-        <RefreshCw className="w-5 h-5 animate-spin" />
-        <span className="text-sm">Cargando documento...</span>
+      <div className="mx-auto max-w-5xl space-y-4">
+        <LoadingLabel>Cargando documento</LoadingLabel>
+        <Skeleton className="h-4 w-32" />
+        <div className="card space-y-4 p-5">
+          <div className="flex items-center gap-3">
+            <Skeleton className="h-8 w-8 rounded-lg" />
+            <Skeleton className="h-5 w-64" />
+          </div>
+          <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
+            {Array.from({ length: 4 }).map((_, i) => (
+              <Skeleton key={i} className="h-4 w-24" />
+            ))}
+          </div>
+        </div>
+        <Skeleton className="h-9 w-80 rounded-full" />
+        <div className="card space-y-2 p-5">
+          {Array.from({ length: 6 }).map((_, i) => (
+            <Skeleton key={i} className="h-3 w-full" />
+          ))}
+        </div>
       </div>
     );
   }
@@ -242,48 +261,32 @@ export default function DocDetail() {
             {doc.file_type === "pdf" && (
               <button
                 onClick={() => setShowPreview((v) => !v)}
-                className="p-2 rounded-md text-ink-3 hover:text-brand-hover hover:bg-brand-soft transition-colors"
+                className="btn-icon hover:bg-brand-soft hover:text-brand-soft-fg"
                 title={showPreview ? "Ocultar vista previa" : "Vista previa"}
+                aria-label={showPreview ? "Ocultar vista previa" : "Vista previa"}
               >
                 <Eye className="w-4 h-4" />
               </button>
             )}
             <button
               onClick={handleDownload}
-              className="p-2 rounded-md text-ink-3 hover:text-brand-hover hover:bg-brand-soft transition-colors"
+              className="btn-icon hover:bg-brand-soft hover:text-brand-soft-fg"
               title="Descargar original"
+              aria-label="Descargar original"
             >
               <Download className="w-4 h-4" />
             </button>
           </div>
 
           <div className="shrink-0">
-            {confirmDelete ? (
-              <div className="flex items-center gap-1.5">
-                <button
-                  onClick={handleDelete}
-                  disabled={deleting}
-                  className="btn btn-danger btn-sm"
-                >
-                  {deleting ? "Eliminando..." : "Confirmar"}
-                </button>
-                <button
-                  onClick={() => setConfirmDelete(false)}
-                  disabled={deleting}
-                  className="text-xs font-medium px-2.5 py-1.5 rounded-md bg-surface-2 text-ink-2 hover:bg-surface-3 transition-colors"
-                >
-                  Cancelar
-                </button>
-              </div>
-            ) : (
-              <button
-                onClick={() => setConfirmDelete(true)}
-                className="p-2 rounded-md text-ink-3 hover:text-danger-fg hover:bg-danger-soft transition-colors"
-                title="Eliminar documento"
-              >
-                <Trash2 className="w-4 h-4" />
-              </button>
-            )}
+            <button
+              onClick={() => setConfirmDelete(true)}
+              className="btn-icon hover:bg-danger-soft hover:text-danger-fg"
+              title="Eliminar documento"
+              aria-label="Eliminar documento"
+            >
+              <Trash2 className="w-4 h-4" />
+            </button>
           </div>
         </div>
 
@@ -384,50 +387,22 @@ export default function DocDetail() {
         </div>
       )}
 
-      {/* Tabs */}
-      <div className="border-b border-line">
-        <div className="flex gap-6">
-          <button
-            onClick={() => setActiveTab("content")}
-            className={`pb-3 text-sm font-medium border-b-2 transition-colors ${
-              activeTab === "content"
-                ? "border-brand text-brand"
-                : "border-transparent text-ink-2 hover:text-ink"
-            }`}
-          >
-            <span className="flex items-center gap-1.5">
-              <BookOpen className="w-4 h-4" />
-              Contenido extraído
-            </span>
-          </button>
-          <button
-            onClick={() => setActiveTab("chunks")}
-            className={`pb-3 text-sm font-medium border-b-2 transition-colors ${
-              activeTab === "chunks"
-                ? "border-brand text-brand"
-                : "border-transparent text-ink-2 hover:text-ink"
-            }`}
-          >
-            <span className="flex items-center gap-1.5">
-              <Layers className="w-4 h-4" />
-              Chunks ({chunkCount})
-            </span>
-          </button>
-          <button
-            onClick={() => setActiveTab("history")}
-            className={`pb-3 text-sm font-medium border-b-2 transition-colors ${
-              activeTab === "history"
-                ? "border-brand text-brand"
-                : "border-transparent text-ink-2 hover:text-ink"
-            }`}
-          >
-            <span className="flex items-center gap-1.5">
-              <Clock className="w-4 h-4" />
-              Historial ({history.length})
-            </span>
-          </button>
-        </div>
-      </div>
+      {/* Pestañas — mismo control segmentado que el resto de la aplicación */}
+      <Tabs
+        items={[
+          { id: "content", icon: BookOpen, label: "Contenido extraído" },
+          { id: "chunks", icon: Layers, label: "Chunks", count: chunkCount },
+          {
+            id: "history",
+            icon: Clock,
+            label: "Historial",
+            count: history.length,
+          },
+        ]}
+        value={activeTab}
+        onChange={setActiveTab}
+        label="Vista del documento"
+      />
 
       {/* Tab content */}
       <div>
@@ -527,6 +502,16 @@ export default function DocDetail() {
           </div>
         )}
       </div>
+
+      <ConfirmDialog
+        open={confirmDelete}
+        title="¿Eliminar este documento?"
+        description="Se borrarán también sus fragmentos, sugerencias e historial. Esta acción no se puede deshacer."
+        itemName={doc.filename}
+        loading={deleting}
+        onConfirm={handleDelete}
+        onCancel={() => setConfirmDelete(false)}
+      />
     </div>
   );
 }

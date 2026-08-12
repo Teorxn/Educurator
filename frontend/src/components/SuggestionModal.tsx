@@ -1,3 +1,4 @@
+import { useId } from "react";
 import {
   X,
   Brain,
@@ -10,6 +11,7 @@ import {
 } from "lucide-react";
 import type { Suggestion } from "../api/docs";
 import type { SeverityLevel } from "../api/suggestions";
+import Modal from "./Modal";
 
 const TYPE_LABEL: Record<string, { label: string; color: string }> = {
   redundancy: {
@@ -112,6 +114,7 @@ interface Props {
 }
 
 export default function SuggestionModal({ suggestion: s, onClose }: Props) {
+  const titleId = useId();
   const typeStyle = TYPE_LABEL[s.type] ?? TYPE_LABEL.redundancy;
   const incData = extractInconsistencyData(s.description);
   const severityStyle = incData ? SEVERITY_BADGE[incData.severity] : null;
@@ -121,26 +124,25 @@ export default function SuggestionModal({ suggestion: s, onClose }: Props) {
     : null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-      <div className="fixed inset-0 bg-black/50 backdrop-blur-[2px]" onClick={onClose} />
-      <div className="relative bg-surface border border-line rounded-2xl shadow-[var(--shadow-overlay)] max-w-2xl w-full max-h-[90vh] overflow-y-auto z-10">
-        {/* Header */}
-        <div className="sticky top-0 bg-surface border-b border-line px-6 py-4 flex items-center justify-between rounded-t-2xl z-20">
-          <div className="flex items-center gap-2">
-            <Brain className="w-5 h-5 text-brand" />
-            <h2 className="text-lg font-semibold text-ink">
-              Razonamiento completo
-            </h2>
-          </div>
-          <button
-            onClick={onClose}
-            className="p-1.5 rounded-md text-ink-3 hover:text-ink-2 hover:bg-surface-2 transition-colors"
-          >
-            <X className="w-4 h-4" />
-          </button>
+    <Modal open onClose={onClose} labelledBy={titleId} size="lg">
+      {/* Cabecera */}
+      <div className="sticky top-0 z-20 flex items-center justify-between rounded-t-2xl border-b border-line bg-surface px-6 py-4">
+        <div className="flex items-center gap-2">
+          <Brain className="w-5 h-5 text-brand" />
+          <h2 id={titleId} className="text-lg font-semibold text-ink">
+            Razonamiento completo
+          </h2>
         </div>
+        <button
+          onClick={onClose}
+          className="btn-icon h-8 w-8"
+          aria-label="Cerrar"
+        >
+          <X className="w-4 h-4" />
+        </button>
+      </div>
 
-        <div className="px-6 py-4 space-y-5">
+      <div className="px-6 py-4 space-y-5">
           {/* Type & Status badges + Severity badge */}
           <div className="flex items-center gap-2 flex-wrap">
             <span
@@ -328,8 +330,7 @@ export default function SuggestionModal({ suggestion: s, onClose }: Props) {
               </span>
             </div>
           )}
-        </div>
       </div>
-    </div>
+    </Modal>
   );
 }

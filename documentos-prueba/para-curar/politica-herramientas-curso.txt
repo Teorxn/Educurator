@@ -1,0 +1,32 @@
+POLÍTICA DE HERRAMIENTAS DEL CURSO
+Desarrollo Web Full Stack — ISW-3041
+
+1. EDITOR Y ENTORNO
+Cada estudiante puede usar el editor de texto que prefiera. El material
+del curso usa Visual Studio Code en los ejemplos, pero no es obligatorio.
+
+2. CONTROL DE VERSIONES
+El uso de Git es obligatorio desde la semana 2. El historial de la
+ejecución hace parte de la evaluación del proyecto: una entrega con un
+único commit se califica sobre el 70% de la nota.
+
+3. INTELIGENCIA ARTIFICIAL
+Queda terminantemente prohibido el uso de cualquier herramienta de
+inteligencia artificial generativa, incluidos asistentes de código. Los
+trabajos se revisan con detectores de contenido generado por IA y la
+detección implica la pérdida del curso.
+
+4. BIBLIOTECAS DE TERCEROS
+En los módulos 1 y 2 no se permiten bibliotecas externas: el objetivo es
+aprender los fundamentos. A partir del módulo 3 se permite el uso de las
+bibliotecas indicadas por la docente.
+
+5. TRABAJO EN GRUPO
+El proyecto final es individual. Los talleres semanales pueden resolverse
+en parejas, pero cada estudiante entrega su propia versión y responde por
+ella.
+
+6. COMUNICACIÓN
+Las dudas se resuelven en el foro del aula virtual, no por mensajería
+privada, para que la respuesta le sirva a todo el grupo. El tiempo de
+respuesta habitual es de 48 horas hábiles.

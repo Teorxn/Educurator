@@ -7,32 +7,21 @@ import {
   GitBranch,
   Loader2,
   Play,
-  RefreshCw,
   XCircle,
 } from "lucide-react";
-import AgentGraph from "../components/AgentGraph";
+import AgentGraphModal from "../components/AgentGraph";
+import Skeleton, { SkeletonTable, LoadingLabel } from "../components/Skeleton";
 import { getCurationRuns, triggerCuration } from "../api/analysis";
 import type { AgentRun } from "../api/analysis";
+import { keepIfSame } from "../lib/sameData";
 
 const STATUS_BADGE: Record<
   string,
-  { label: string; color: string; icon: typeof CheckCircle2 }
+  { label: string; tone: string; icon: typeof CheckCircle2 }
 > = {
-  running: {
-    label: "En ejecución",
-    color: "bg-info-soft text-info-fg border-transparent",
-    icon: Loader2,
-  },
-  completed: {
-    label: "Completada",
-    color: "bg-success-soft text-success-fg border-transparent",
-    icon: CheckCircle2,
-  },
-  failed: {
-    label: "Fallida",
-    color: "bg-danger-soft text-danger-fg border-transparent",
-    icon: XCircle,
-  },
+  running: { label: "En ejecución", tone: "chip-info", icon: Loader2 },
+  completed: { label: "Completada", tone: "chip-success", icon: CheckCircle2 },
+  failed: { label: "Fallida", tone: "chip-danger", icon: XCircle },
 };
 
 function fmtDate(d: string | null) {
@@ -66,7 +55,9 @@ export default function AgentRuns() {
   const fetchRuns = async (isFirstLoad = false) => {
     try {
       const { data } = await getCurationRuns();
-      setRuns(data.runs);
+      // Sin novedades no se toca el estado: el sondeo cada 5 s no debe
+      // repintar la tabla.
+      setRuns((prev) => keepIfSame(prev, data.runs));
 
       // Dejar de refrescar cuando no hay corridas en ejecución
       const hasRunning = data.runs.some((r) => r.status === "running");
@@ -111,34 +102,30 @@ export default function AgentRuns() {
     }
   };
 
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center h-64 text-ink-3 gap-2">
-        <RefreshCw className="w-5 h-5 animate-spin" />
-        <span className="text-sm">Cargando ejecuciones...</span>
-      </div>
-    );
-  }
-
   return (
     <div className="space-y-4">
-      {/* Toolbar */}
+      {/* Toolbar — se dibuja desde el primer momento, también mientras carga:
+          así la página no aparece de golpe cuando llega la respuesta. */}
       <div className="flex items-center justify-between flex-wrap gap-3">
-        <p className="text-sm text-ink-2">
-          {runs.length} ejecuci{runs.length !== 1 ? "ones" : "ón"} registrada
-          {runs.length !== 1 ? "s" : ""}
-        </p>
+        {loading ? (
+          <>
+            <Skeleton className="h-5 w-48" />
+            <LoadingLabel>Cargando ejecuciones</LoadingLabel>
+          </>
+        ) : (
+          <p className="text-sm text-ink-2">
+            {runs.length} ejecuci{runs.length !== 1 ? "ones" : "ón"} registrada
+            {runs.length !== 1 ? "s" : ""}
+          </p>
+        )}
         <div className="flex items-center gap-2">
           <button
-            onClick={() => setShowGraph((v) => !v)}
-            className={`flex items-center gap-2 text-sm font-medium px-4 py-2 rounded-lg border transition-colors ${
-              showGraph
-                ? "bg-brand-soft text-brand border-brand/40"
-                : "bg-surface text-ink-2 border-line hover:border-brand/40"
-            }`}
+            onClick={() => setShowGraph(true)}
+            data-tour="agent-graph"
+            className="btn btn-secondary"
           >
             <GitBranch className="w-4 h-4" />
-            {showGraph ? "Ocultar grafo" : "Ver grafo del agente"}
+            Ver grafo del agente
           </button>
           <button
             onClick={handleTrigger}
@@ -155,15 +142,18 @@ export default function AgentRuns() {
         </div>
       </div>
 
-      {showGraph && <AgentGraph />}
+      <AgentGraphModal open={showGraph} onClose={() => setShowGraph(false)} />
 
-      {notice && (
-        <div className="text-sm text-brand bg-brand-soft border border-brand/40 rounded-xl px-4 py-3">
-          {notice}
+      {notice && <div className="note note-brand">{notice}</div>}
+
+      {loading ? (
+        <div className="card overflow-hidden">
+          <SkeletonTable
+            rows={4}
+            cols={["w-32", "w-24", "w-16", "w-10", "w-10", "w-28"]}
+          />
         </div>
-      )}
-
-      {runs.length === 0 ? (
+      ) : runs.length === 0 ? (
         <div className="flex flex-col items-center justify-center h-64 text-center">
           <div className="w-14 h-14 bg-surface-2 rounded-2xl flex items-center justify-center mb-4">
             <Activity className="w-7 h-7 text-ink-3" />
@@ -178,24 +168,12 @@ export default function AgentRuns() {
           <table className="w-full text-sm">
             <thead className="bg-surface-2 border-b border-line">
               <tr>
-                <th className="px-4 py-3 text-left font-medium text-ink-2">
-                  Fecha
-                </th>
-                <th className="px-4 py-3 text-left font-medium text-ink-2">
-                  Estado
-                </th>
-                <th className="px-4 py-3 text-left font-medium text-ink-2">
-                  Duración
-                </th>
-                <th className="px-4 py-3 text-left font-medium text-ink-2">
-                  Docs
-                </th>
-                <th className="px-4 py-3 text-left font-medium text-ink-2">
-                  Sugerencias
-                </th>
-                <th className="px-4 py-3 text-left font-medium text-ink-2">
-                  Resumen
-                </th>
+                <th className="table-head">Fecha</th>
+                <th className="table-head">Estado</th>
+                <th className="table-head">Duración</th>
+                <th className="table-head">Docs</th>
+                <th className="table-head">Sugerencias</th>
+                <th className="table-head">Resumen</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-line">
@@ -207,12 +185,12 @@ export default function AgentRuns() {
                     key={run.thread_id}
                     className="hover:bg-surface-2 transition-colors"
                   >
-                    <td className="px-4 py-3 text-ink-2 text-xs whitespace-nowrap">
+                    <td className="table-cell text-xs whitespace-nowrap">
                       {fmtDate(run.started_at)}
                     </td>
-                    <td className="px-4 py-3">
+                    <td className="table-cell">
                       <span
-                        className={`inline-flex items-center gap-1.5 text-xs font-medium px-2.5 py-1 rounded-full border ${badge.color}`}
+                        className={`chip ${badge.tone}`}
                         title={run.error ?? undefined}
                       >
                         <Icon
@@ -223,19 +201,21 @@ export default function AgentRuns() {
                         {badge.label}
                       </span>
                     </td>
-                    <td className="px-4 py-3 text-ink-2 whitespace-nowrap">
+                    <td className="table-cell whitespace-nowrap">
                       <span className="inline-flex items-center gap-1">
                         <Clock className="w-3 h-3 text-ink-3" />
-                        {fmtDuration(run.duration_seconds)}
+                        <span className="tnum">
+                          {fmtDuration(run.duration_seconds)}
+                        </span>
                       </span>
                     </td>
-                    <td className="px-4 py-3 text-ink-2">
+                    <td className="table-cell tnum">
                       {run.documents_processed}
                     </td>
-                    <td className="px-4 py-3 text-ink-2">
+                    <td className="table-cell tnum">
                       {run.suggestions_generated}
                     </td>
-                    <td className="px-4 py-3 text-ink-2 text-xs">
+                    <td className="table-cell text-xs">
                       <span className="inline-flex items-center gap-2">
                         {fmtSummary(run)}
                         {run.trace_url && (

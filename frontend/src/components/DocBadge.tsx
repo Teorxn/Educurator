@@ -30,13 +30,20 @@ const STATUS_MAP: Record<string, StyleDef> = {
   archived: { tone: 'chip-neutral', icon: Archive, label: 'Archivado' },
 }
 
-export default function DocBadge({ status }: { status: string }) {
+interface DocBadgeProps {
+  status: string
+  /** Renombra estados concretos sin duplicar el resto del mapa: los documentos
+   *  de referencia hablan de disponibilidad, no de aprobación. */
+  labels?: Record<string, string>
+}
+
+export default function DocBadge({ status, labels }: DocBadgeProps) {
   const s = STATUS_MAP[status] ?? STATUS_MAP['needs_review']
   const Icon = s.icon
   return (
     <span className={`chip ${s.tone}`}>
       <Icon className={`h-3 w-3 shrink-0 ${s.spin ? 'animate-spin' : ''}`} />
-      {s.label}
+      {labels?.[status] ?? s.label}
     </span>
   )
 }

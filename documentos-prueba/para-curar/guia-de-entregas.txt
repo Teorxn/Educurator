@@ -1,0 +1,39 @@
+GUÍA DE ENTREGAS DEL CURSO
+Desarrollo Web Full Stack — ISW-3041 — Semestre 2026-1
+
+PROPÓSITO DE ESTE DOCUMENTO
+Reunir en un solo lugar todo lo que el estudiante necesita saber para
+entregar sus trabajos sin contratiempos.
+
+1. CÓMO SE CALIFICA EL CURSO
+La calificación final se compone así:
+- Proyecto final: 40%
+- Talleres semanales: 30%
+- Examen parcial: 20%
+- Quizzes de lectura: 10%
+
+La nota mínima aprobatoria del curso es 3.0 sobre 5.0.
+
+2. CANAL DE ENTREGA
+Todas las entregas se realizan por el aula virtual, en la tarea
+correspondiente. No se reciben trabajos por correo electrónico ni por
+mensajería instantánea. Un trabajo enviado por un canal distinto se
+considera no entregado.
+
+3. FECHA Y HORA LÍMITE
+Las entregas se hacen antes de las 23:59 de la fecha indicada en el
+cronograma. La hora de referencia es la del servidor del aula virtual.
+
+4. ENTREGAS TARDÍAS
+Se aceptan entregas tardías hasta TRES (3) días hábiles después de la
+fecha límite, con una penalización del 10% por cada día de retraso.
+Pasado ese plazo el trabajo se califica con 0.0.
+
+5. ASISTENCIA
+Se exige una asistencia mínima del 70% de las sesiones. El estudiante que
+no alcance ese porcentaje reprueba el curso por fallas.
+
+6. FORMATO DE LOS ARCHIVOS
+- Código: repositorio Git con el historial completo de la ejecución.
+- Documentos: PDF. No se aceptan capturas de pantalla de texto.
+- Nombre del archivo: ISW3041_apellido_nombre_actividad.

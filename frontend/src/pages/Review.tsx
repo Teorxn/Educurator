@@ -27,6 +27,8 @@ import {
 } from "../api/docs";
 import type { Suggestion, Document } from "../api/docs";
 import SuggestionModal from "../components/SuggestionModal";
+import Tabs from "../components/Tabs";
+import Skeleton, { LoadingLabel } from "../components/Skeleton";
 
 /** Presentación por tipo: icono + tono. El color nunca informa por sí solo. */
 const TYPE_UI: Record<
@@ -66,10 +68,10 @@ const TYPE_UI: Record<
 };
 
 const STATUS_TABS = [
-  { value: "pending", label: "Por revisar" },
-  { value: "approved", label: "Aprobadas" },
-  { value: "rejected", label: "Rechazadas" },
-  { value: "", label: "Todas" },
+  { id: "pending", label: "Por revisar" },
+  { id: "approved", label: "Aprobadas" },
+  { id: "rejected", label: "Rechazadas" },
+  { id: "", label: "Todas" },
 ];
 
 const TYPE_OPTIONS = [
@@ -294,28 +296,14 @@ export default function Review() {
       </section>
 
       {/* ── Filtros: 1 grupo de pestañas + 2 selectores ───────────────────── */}
-      <div className="flex flex-wrap items-center gap-2">
-        <div
-          role="tablist"
-          aria-label="Estado de la sugerencia"
-          className="flex items-center gap-1 rounded-full border border-line bg-surface-2 p-1"
-        >
-          {STATUS_TABS.map((opt) => (
-            <button
-              key={opt.value}
-              role="tab"
-              aria-selected={statusFilter === opt.value}
-              onClick={() => setFilter("status", opt.value)}
-              className={`rounded-full px-3 py-1.5 text-xs font-semibold transition-colors ${
-                statusFilter === opt.value
-                  ? "bg-surface text-ink shadow-sm"
-                  : "text-ink-2 hover:text-ink"
-              }`}
-            >
-              {opt.label}
-            </button>
-          ))}
-        </div>
+      <div data-tour="review-list" className="flex flex-wrap items-center gap-2">
+        <Tabs
+          items={STATUS_TABS}
+          value={statusFilter}
+          onChange={(id) => setFilter("status", id)}
+          label="Estado de la sugerencia"
+          size="sm"
+        />
 
         <select
           value={typeFilter}
@@ -350,10 +338,19 @@ export default function Review() {
       </div>
 
       {/* ── Contenido ─────────────────────────────────────────────────────── */}
-      {loading ? (
-        <div className="flex h-64 items-center justify-center gap-2 text-ink-3">
-          <Loader2 className="h-5 w-5 animate-spin" />
-          <span className="text-sm">Cargando sugerencias...</span>
+      {/* Sólo se vacía la lista cuando todavía no hay nada que enseñar. Al
+          cambiar de filtro se mantiene el resultado anterior atenuado: antes
+          la página se quedaba en blanco y volvía a crecer con cada filtro. */}
+      {loading && suggestions.length === 0 ? (
+        <div className="space-y-2" aria-hidden>
+          {Array.from({ length: 3 }).map((_, i) => (
+            <div key={i} className="card space-y-3 p-4">
+              <Skeleton className="h-4 w-32" />
+              <Skeleton className="h-3 w-full" />
+              <Skeleton className="h-3 w-2/3" />
+            </div>
+          ))}
+          <LoadingLabel>Cargando sugerencias</LoadingLabel>
         </div>
       ) : suggestions.length === 0 ? (
         <div className="card flex flex-col items-center justify-center px-4 py-16 text-center">
@@ -376,7 +373,11 @@ export default function Review() {
           </p>
         </div>
       ) : (
-        <div className="space-y-5">
+        <div
+          className={`space-y-5 transition-opacity duration-150 ${
+            loading ? "pointer-events-none opacity-55" : "opacity-100"
+          }`}
+        >
           {groups.map((group) => {
             const groupPending = group.items.filter(
               (s) => s.status === "pending",

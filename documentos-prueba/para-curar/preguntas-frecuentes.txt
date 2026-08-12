@@ -1,0 +1,37 @@
+PREGUNTAS FRECUENTES DE LOS ESTUDIANTES
+Desarrollo Web Full Stack — ISW-3041
+
+¿Cuánto vale el proyecto final?
+El proyecto final representa el 35% de la nota del curso y se entrega en
+tres cortes a lo largo del semestre.
+
+¿Qué pasa si entrego tarde?
+Se aceptan entregas tardías hasta siete días después de la fecha límite,
+con una penalización del 5% sobre la nota del trabajo.
+
+¿Cuál es la nota mínima para aprobar?
+La nota mínima aprobatoria del curso es 3.0 sobre 5.0.
+
+¿Cuánta asistencia necesito?
+Se exige una asistencia mínima del 70% de las sesiones. Por debajo de ese
+porcentaje se reprueba el curso por fallas.
+
+¿Puedo usar inteligencia artificial para los talleres?
+No. El uso de herramientas de inteligencia artificial generativa está
+prohibido en todas las actividades del curso.
+
+¿Necesito un computador potente?
+No. Basta con un navegador actualizado y un editor de texto. Todo el
+software que usaremos es gratuito.
+
+¿Se puede trabajar en parejas?
+El proyecto final es individual. Los talleres semanales pueden resolverse
+en parejas, pero cada estudiante entrega su propia versión.
+
+¿Dónde se publican las notas?
+En el aula virtual, dentro de los cinco días hábiles siguientes a cada
+entrega.
+
+¿Hay recuperación del examen parcial?
+Solo con incapacidad médica certificada presentada ante la Secretaría
+Académica dentro de los tres días hábiles siguientes al examen.

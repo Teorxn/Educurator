@@ -14,7 +14,11 @@ api.interceptors.request.use((config) => {
 api.interceptors.response.use(
   (response) => response,
   (error) => {
-    if (error.response?.status === 401) {
+    // Un 401 en una petición con token = sesión expirada → volver al login.
+    // El login/registro no llevan token: ahí un 401 es "credenciales
+    // incorrectas" y debe manejarlo la vista sin recargar la página.
+    const hadToken = Boolean(error.config?.headers?.Authorization)
+    if (error.response?.status === 401 && hadToken) {
       localStorage.removeItem('access_token')
       window.location.href = '/login'
     }

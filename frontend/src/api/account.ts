@@ -187,6 +187,8 @@ export interface ChatHistoryEntry {
   confidence: number;
   sources: ChatSource[];
   model: string | null;
+  /** Documentos dentro del alcance de la búsqueda */
+  searched_documents: number;
   created_at: string;
 }
 

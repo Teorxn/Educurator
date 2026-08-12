@@ -1,0 +1,47 @@
+SYLLABUS — DESARROLLO WEB FULL STACK
+Código: ISW-3041 | Créditos: 4 | Semestre 2026-1
+Docente: María Restrepo | Correo: mrestrepo@unis.edu
+
+1. PRESENTACIÓN DEL CURSO
+El curso introduce al estudiante en el desarrollo de aplicaciones web
+completas, desde la construcción de interfaces hasta la exposición de
+servicios y la persistencia de datos. Se trabaja con un proyecto
+transversal que acompaña todo el semestre.
+
+2. OBJETIVOS DE APRENDIZAJE
+Al finalizar el curso el estudiante estará en capacidad de:
+- Construir interfaces web accesibles con HTML y CSS.
+- Programar la lógica de una aplicación en JavaScript.
+- Diseñar y consumir servicios HTTP.
+- Modelar y consultar una base de datos relacional.
+- Desplegar una aplicación completa en un entorno de producción.
+
+3. EVALUACIÓN
+La calificación final se compone así:
+- Proyecto final: 40%
+- Talleres semanales: 30%
+- Examen parcial: 20%
+- Quizzes de lectura: 10%
+
+La nota mínima aprobatoria del curso es 3.0 sobre 5.0.
+
+4. ENTREGAS Y RETRASOS
+Las entregas se hacen por el aula virtual antes de las 23:59 de la fecha
+indicada. Se aceptan entregas tardías hasta SIETE (7) días después de la
+fecha límite, con una penalización del 5% sobre la nota final del trabajo.
+Después de esos siete días la entrega no se recibe.
+
+5. ASISTENCIA
+Se exige una asistencia mínima del 70% de las sesiones. El estudiante que
+no alcance ese porcentaje reprueba el curso por fallas.
+
+6. USO DE INTELIGENCIA ARTIFICIAL
+Queda terminantemente prohibido el uso de cualquier herramienta de
+inteligencia artificial generativa en los trabajos del curso. La
+detección de contenido generado por IA se sanciona con la pérdida del
+curso.
+
+7. BIBLIOGRAFÍA
+- Duckett, J. HTML and CSS: Design and Build Websites.
+- Flanagan, D. JavaScript: The Definitive Guide.
+- Documentación oficial de MDN Web Docs.

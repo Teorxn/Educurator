@@ -1,0 +1,45 @@
+MÓDULO 2 — PROGRAMACIÓN EN JAVASCRIPT
+Desarrollo Web Full Stack — ISW-3041
+
+OBJETIVOS DEL MÓDULO
+Programar la lógica de una aplicación web en JavaScript, manipular el
+documento y consumir servicios HTTP.
+
+1. VARIABLES Y TIPOS
+JavaScript declara variables con let y const. Se recomienda const por
+defecto y let solo cuando el valor deba reasignarse.
+
+2. FUNCIONES
+Una función es un bloque de código con nombre que recibe unos parámetros
+y devuelve un resultado. Se declara con la palabra clave function.
+
+Además de la declaración clásica, existe la función flecha, una forma
+compacta de escribir funciones que además no crea su propio this.
+
+3. MÁS SOBRE FUNCIONES
+Una función en JavaScript es una porción de código reutilizable que
+acepta argumentos de entrada y produce un valor de salida. Es el
+mecanismo básico para no repetir lógica.
+
+Las arrow functions son especialmente útiles como devoluciones de llamada
+en los métodos de arreglos. Por ejemplo, en map y filter se suele usar
+una lambda en lugar de una función tradicional, porque el código queda
+más corto.
+
+4. MANIPULACIÓN DEL DOM
+El DOM representa el documento como un árbol de nodos. Para cambiar el
+texto de un elemento se modifica su propiedad textContent. Para cambiar
+la ruta de una imagen se modifica el atributo src.
+
+Conviene recordar que no todo atributo del HTML se refleja como propiedad
+del objeto, y que algunas propiedades no existen como atributos. En este
+curso usaremos ambos términos indistintamente para simplificar.
+
+5. ASINCRONÍA
+Las operaciones que tardan (una petición de red, la lectura de un
+archivo) no bloquean la ejecución. Se manejan con promesas y con la
+sintaxis async/await.
+
+6. ENTORNO DE EJECUCIÓN
+Fuera del navegador, JavaScript se ejecuta con Node.js. En el curso
+usaremos Node.js 14, que es la versión LTS actual.

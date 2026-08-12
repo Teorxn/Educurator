@@ -166,6 +166,10 @@
     -webkit-text-size-adjust: 100%;
     background-color: var(--c-canvas);
     color: var(--c-ink);
+    /* Reserva el canal de la barra de scroll siempre. Sin esto, ir de una
+       vista larga a una corta la hace desaparecer y todo el contenido se
+       desplaza unos píxeles a la derecha: el salto que se nota al navegar. */
+    scrollbar-gutter: stable;
   }
 
   body {
@@ -230,7 +234,56 @@
   }
 }
 
+/* ── Movimiento ──────────────────────────────────────────────────────────────
+   Duraciones cortas y una sola curva: el movimiento sirve para que el usuario
+   siga de dónde sale cada cosa, no para lucirse. Todo queda anulado por la
+   regla de `prefers-reduced-motion` de más arriba.                            */
+@keyframes rise-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px) scale(0.985);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes skeleton-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.5;
+  }
+}
+
 @layer components {
+  .anim-rise-in {
+    animation: rise-in 0.2s cubic-bezier(0.16, 1, 0.3, 1) both;
+  }
+  .anim-fade-in {
+    animation: fade-in 0.16s ease-out both;
+  }
+
+  /* Hueco de contenido mientras carga: ocupa el mismo sitio que ocupará el
+     dato, para que la página no salte al llegar la respuesta. */
+  .skeleton {
+    background-color: var(--c-surface-3);
+    border-radius: var(--radius-field);
+    animation: skeleton-pulse 1.4s ease-in-out infinite;
+  }
+
   .card {
     background-color: var(--c-surface);
     border: 1px solid var(--c-line);

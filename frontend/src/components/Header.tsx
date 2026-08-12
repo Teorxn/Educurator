@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import { LogOut, Menu, HelpCircle } from "lucide-react";
 import TutorialModal, { hasSeenTutorial } from "./TutorialModal";
@@ -54,12 +54,9 @@ export default function Header({ onMenuClick }: HeaderProps) {
   const { profile } = useProfile();
 
   // HU-21 — tutorial accesible desde cualquier sección; se abre solo la
-  // primera vez y recuerda si el usuario ya lo vio.
-  const [tutorialOpen, setTutorialOpen] = useState(false);
-
-  useEffect(() => {
-    if (!hasSeenTutorial()) setTutorialOpen(true);
-  }, []);
+  // primera vez y recuerda si el usuario ya lo vio. El valor inicial se
+  // calcula al montar (no en un efecto) para no encadenar un segundo render.
+  const [tutorialOpen, setTutorialOpen] = useState(() => !hasSeenTutorial());
 
   const handleLogout = () => {
     localStorage.removeItem("access_token");

@@ -49,8 +49,8 @@ _NO_CONTEXT_ANSWER = (
 # todavía no tiene documentos a su alcance (evita confundir ambas causas).
 _NO_DOCUMENTS_ANSWER = (
     "Todavía no hay documentos en tu base de conocimiento. Sube material "
-    "del curso desde «Subir documento» y, cuando el agente termine de "
-    "analizarlo, podrás hacerle preguntas."
+    "del curso desde «Documentos» y, cuando el agente termine de analizarlo, "
+    "podrás hacerle preguntas."
 )
 
 
@@ -118,6 +118,10 @@ class ChatHistoryEntry(BaseModel):
     confidence: float
     sources: list[ChatSource]
     model: str | None = None
+    # Se guarda en la fila desde el principio, pero no se devolvía: al reabrir
+    # un hilo, las respuestas sin contexto perdían la aclaración de en cuántos
+    # documentos se había buscado.
+    searched_documents: int = 0
     created_at: datetime
 
     model_config = {"from_attributes": True}
@@ -375,11 +379,14 @@ async def chat(
         chunks = await asyncio.to_thread(
             _retrieve_chunks, body.question, allowed_ids, settings.CHAT_TOP_K
         )
-    except Exception as e:
+    except Exception:
+        # El detalle técnico va al log, no a la pantalla del docente: ahí sólo
+        # cabe qué pasó y qué puede hacer al respecto.
         logger.exception("Error recuperando contexto para el chat")
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=f"No se pudo consultar la base de conocimiento: {e}",
+            detail="No se pudo consultar la base de conocimiento en este "
+            "momento. Intenta de nuevo en unos segundos.",
         )
 
     # El umbral protege contra falsos positivos al buscar en TODA la base.
@@ -605,6 +612,7 @@ async def get_chat_history(
             confidence=r.confidence,
             sources=[ChatSource(**s) for s in (r.sources or [])],
             model=r.model,
+            searched_documents=r.searched_documents,
             created_at=r.created_at,
         )
         for r in rows

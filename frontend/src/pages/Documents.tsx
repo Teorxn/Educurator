@@ -19,6 +19,11 @@ import {
   Trash2,
 } from "lucide-react";
 import DocBadge from "../components/DocBadge";
+import ConfirmDialog from "../components/ConfirmDialog";
+import Tabs from "../components/Tabs";
+import type { TabItem } from "../components/Tabs";
+import { SkeletonTable, LoadingLabel } from "../components/Skeleton";
+import { keepIfSame } from "../lib/sameData";
 import {
   getDocs,
   getDocsStatus,
@@ -70,35 +75,24 @@ export default function Documents() {
     });
   };
 
-  const TABS: { id: DocsTab; icon: typeof FileText; label: string }[] = [
+  const TABS: TabItem<DocsTab>[] = [
     { id: "curated", icon: FileText, label: "Documentos" },
-    { id: "reference", icon: BookOpen, label: "De referencia" },
+    {
+      id: "reference",
+      icon: BookOpen,
+      label: "De referencia",
+      tour: "tab-reference",
+    },
   ];
 
   return (
     <div className="mx-auto max-w-6xl space-y-4">
-      <div
-        role="tablist"
-        aria-label="Tipo de documento"
-        className="flex w-fit items-center gap-1 rounded-full border border-line bg-surface-2 p-1"
-      >
-        {TABS.map(({ id, icon: Icon, label }) => (
-          <button
-            key={id}
-            role="tab"
-            aria-selected={tab === id}
-            onClick={() => switchTab(id)}
-            className={`flex items-center gap-2 rounded-full px-4 py-1.5 text-sm font-semibold transition-colors ${
-              tab === id
-                ? "bg-surface text-ink shadow-sm"
-                : "text-ink-2 hover:text-ink"
-            }`}
-          >
-            <Icon className="h-4 w-4" />
-            {label}
-          </button>
-        ))}
-      </div>
+      <Tabs
+        items={TABS}
+        value={tab}
+        onChange={switchTab}
+        label="Tipo de documento"
+      />
 
       {tab === "curated" ? <CuratedDocsPanel /> : <ReferenceDocsPanel />}
     </div>
@@ -152,7 +146,9 @@ function CuratedDocsPanel() {
       const sorted = [...data.items].sort(
         (a, b) => new Date(b.uploaded_at).getTime() - new Date(a.uploaded_at).getTime(),
       );
-      setDocs(sorted);
+      // Sondeo cada 5 s: si el servidor devuelve lo mismo, no se toca el estado
+      // y la tabla no se vuelve a renderizar.
+      setDocs((prev) => keepIfSame(prev, sorted));
       const stillWorking = data.items.some(
         (d) => d.status === "processing" || d.status === "queued",
       );
@@ -184,7 +180,6 @@ function CuratedDocsPanel() {
 
   const handleDeleteDoc = async (id: string) => {
     setDeletingId(id);
-    setConfirmDelete(null);
     try {
       await deleteDoc(id);
       setDocs((prev) => prev.filter((d) => d.id !== id));
@@ -192,6 +187,7 @@ function CuratedDocsPanel() {
       // silent
     } finally {
       setDeletingId(null);
+      setConfirmDelete(null);
     }
   };
 
@@ -241,7 +237,7 @@ function CuratedDocsPanel() {
         data.items.forEach((it) => {
           if (trackedIds.includes(it.id)) map[it.id] = it;
         });
-        setStatuses(map);
+        setStatuses((prev) => keepIfSame(prev, map));
         // Mantiene la tabla de abajo sincronizada con lo que se sube aquí
         loadDocs(false);
 
@@ -382,6 +378,7 @@ function CuratedDocsPanel() {
       <div className="card overflow-hidden">
         <button
           onClick={() => setUploadOpen((v) => !v)}
+          data-tour="upload-docs"
           className="w-full flex items-center justify-between px-4 py-3 hover:bg-surface-2 transition-colors"
         >
           <span className="flex items-center gap-2 text-sm font-medium text-ink">
@@ -433,7 +430,7 @@ function CuratedDocsPanel() {
             </div>
 
             {notice && (
-              <div className="flex items-center gap-2 bg-brand-soft border border-brand/40 text-brand text-sm rounded-xl px-4 py-3">
+              <div className="note note-brand">
                 <AlertCircle className="w-4 h-4 shrink-0" />
                 {notice}
               </div>
@@ -562,78 +559,81 @@ function CuratedDocsPanel() {
         )}
       </div>
 
+      {analysisMsg && (
+        <div className="note note-info">
+          <FlaskConical className="w-4 h-4 shrink-0" />
+          {analysisMsg}
+        </div>
+      )}
+
       {/* Listado */}
-      {docsLoading ? (
-        <div className="flex items-center justify-center h-64 text-ink-3 gap-2">
-          <RefreshCw className="w-5 h-5 animate-spin" />
-          <span className="text-sm">Cargando documentos...</span>
-        </div>
-      ) : docs.length === 0 ? (
-        <div className="flex flex-col items-center justify-center h-64 text-center">
-          <div className="w-14 h-14 bg-surface-2 rounded-2xl flex items-center justify-center mb-4">
-            <FileText className="w-7 h-7 text-ink-3" />
+      <div className="card overflow-hidden">
+        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-line px-5 py-4">
+          <div className="flex items-center gap-2">
+            <FileText className="w-4 h-4 text-brand" />
+            <h2 className="section-title">Documentos del curso</h2>
+            <span className="text-xs text-ink-3">({docs.length})</span>
           </div>
-          <p className="text-ink-2 font-medium">No hay documentos aún</p>
-          <p className="text-sm text-ink-3 mt-1">Sube tu primer documento para comenzar</p>
-          <button
-            onClick={() => setUploadOpen(true)}
-            className="btn btn-primary mt-4"
-          >
-            <UploadIcon className="w-3.5 h-3.5" />
-            Subir documento
-          </button>
-        </div>
-      ) : (
-        <div className="space-y-4">
-          <div className="flex items-center justify-between flex-wrap gap-2">
-            <p className="text-sm text-ink-2">
-              {docs.length} documento{docs.length !== 1 ? "s" : ""}
-            </p>
-            <div className="flex items-center gap-2">
-              {isPolling && (
-                <span className="flex items-center gap-1.5 text-xs text-warning-fg bg-warning-soft border border-transparent rounded-full px-3 py-1">
-                  <RefreshCw className="w-3 h-3 animate-spin" />
-                  Agente procesando...
-                </span>
+          <div className="flex items-center gap-2">
+            {isPolling && (
+              <span className="chip chip-warning">
+                <RefreshCw className="w-3 h-3 animate-spin" />
+                Agente procesando...
+              </span>
+            )}
+            <button
+              onClick={handleAnalyzeAll}
+              disabled={analyzing || isPolling}
+              data-tour="analyze-all"
+              className="btn btn-sm btn-soft"
+            >
+              {analyzing ? (
+                <RefreshCw className="w-3 h-3 animate-spin" />
+              ) : (
+                <Sparkles className="w-3 h-3" />
               )}
-              <button
-                onClick={handleAnalyzeAll}
-                disabled={analyzing || isPolling}
-                className="flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed
-                  bg-brand-soft text-brand hover:bg-brand-soft border border-brand/40"
-              >
-                {analyzing ? (
-                  <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                ) : (
-                  <Sparkles className="w-3.5 h-3.5" />
-                )}
-                {analyzing ? "Analizando..." : "Analizar todo"}
-              </button>
-            </div>
+              {analyzing ? "Analizando..." : "Analizar todo"}
+            </button>
           </div>
+        </div>
 
-          {analysisMsg && (
-            <div className="flex items-center gap-2 text-sm rounded-xl px-4 py-3 bg-info-soft border border-transparent text-info-fg">
-              <FlaskConical className="w-4 h-4 shrink-0" />
-              {analysisMsg}
+        {docsLoading ? (
+          <>
+            <LoadingLabel>Cargando documentos</LoadingLabel>
+            <SkeletonTable
+              rows={4}
+              cols={["w-1/3", "w-12", "w-24", "w-16", "w-28", "w-8"]}
+            />
+          </>
+        ) : docs.length === 0 ? (
+          <div className="flex flex-col items-center justify-center py-16 text-center">
+            <div className="w-14 h-14 bg-surface-2 rounded-2xl flex items-center justify-center mb-4">
+              <FileText className="w-7 h-7 text-ink-3" />
             </div>
-          )}
-
-          <div className="card overflow-hidden">
+            <p className="text-ink-2 font-medium">No hay documentos aún</p>
+            <p className="text-sm text-ink-3 mt-1">
+              Sube tu primer documento para comenzar
+            </p>
+            <button
+              onClick={() => setUploadOpen(true)}
+              className="btn btn-primary mt-4"
+            >
+              <UploadIcon className="w-3.5 h-3.5" />
+              Subir documento
+            </button>
+          </div>
+        ) : (
+          <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead className="bg-surface-2 border-b border-line">
                 <tr>
-                  <th className="px-4 py-3 text-left font-medium text-ink-2">Documento</th>
-                  <th className="px-4 py-3 text-left font-medium text-ink-2">Tipo</th>
-                  <th className="px-4 py-3 text-left font-medium text-ink-2">Estado</th>
-                  <th className="px-4 py-3 text-left font-medium text-ink-2">Tamaño</th>
-                  {isAdmin && (
-                    <th className="px-4 py-3 text-left font-medium text-ink-2">
-                      Subido por
-                    </th>
-                  )}
-                  <th className="px-4 py-3 text-left font-medium text-ink-2">Subido</th>
-                  <th className="px-4 py-3 text-right font-medium text-ink-2">Acciones</th>
+                  <th className="table-head">Documento</th>
+                  <th className="table-head">Tipo</th>
+                  <th className="table-head">Estado</th>
+                  <th className="table-head">Tamaño</th>
+                  {isAdmin && <th className="table-head">Subido por</th>}
+                  <th className="table-head">Subido</th>
+                  <th className="table-head text-right">Acciones</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-line">
@@ -643,7 +643,7 @@ function CuratedDocsPanel() {
                     onClick={() => navigate(`/docs/${doc.id}`)}
                     className="hover:bg-surface-2 transition-colors cursor-pointer"
                   >
-                    <td className="px-4 py-3">
+                    <td className="table-cell">
                       <div className="flex items-center gap-2">
                         <span className="text-base">
                           {{ pdf: "📄", docx: "📝", txt: "📃" }[doc.file_type] ?? "📄"}
@@ -653,84 +653,62 @@ function CuratedDocsPanel() {
                         </span>
                       </div>
                     </td>
-                    <td className="px-4 py-3">
+                    <td className="table-cell">
                       <span className="uppercase text-xs font-semibold text-ink-3 tracking-wide">
                         {doc.file_type}
                       </span>
                     </td>
-                    <td className="px-4 py-3">
+                    <td className="table-cell">
                       <DocBadge status={doc.status} />
                     </td>
-                    <td className="px-4 py-3 text-ink-2">{fmtSize(doc.size_bytes)}</td>
+                    <td className="table-cell tnum">{fmtSize(doc.size_bytes)}</td>
                     {isAdmin && (
-                      <td className="px-4 py-3 text-ink-2 text-xs truncate max-w-[160px]">
+                      <td className="table-cell text-xs truncate max-w-[160px]">
                         {doc.uploader_email ?? "—"}
                       </td>
                     )}
-                    <td className="px-4 py-3 text-ink-2 text-xs">{fmtDate(doc.uploaded_at)}</td>
-                    <td className="px-4 py-3 text-right">
-                      {confirmDelete === doc.id ? (
-                        <div className="flex items-center justify-end gap-1.5">
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              handleDeleteDoc(doc.id);
-                            }}
-                            disabled={deletingId === doc.id}
-                            className="btn btn-danger btn-sm"
-                          >
-                            {deletingId === doc.id ? "..." : "Eliminar"}
-                          </button>
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              setConfirmDelete(null);
-                            }}
-                            className="text-xs font-medium px-2 py-1 rounded-md bg-surface-2 text-ink-2 hover:bg-surface-3 transition-colors"
-                          >
-                            Cancelar
-                          </button>
-                        </div>
-                      ) : (
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setConfirmDelete(doc.id);
-                          }}
-                          className="p-1.5 rounded-md text-ink-3 hover:text-danger-fg hover:bg-danger-soft transition-colors"
-                          title="Eliminar documento"
-                        >
-                          <Trash2 className="w-4 h-4" />
-                        </button>
-                      )}
+                    <td className="table-cell text-xs">{fmtDate(doc.uploaded_at)}</td>
+                    <td className="table-cell text-right">
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setConfirmDelete(doc.id);
+                        }}
+                        className="btn-icon h-8 w-8 hover:bg-danger-soft hover:text-danger-fg"
+                        title="Eliminar documento"
+                        aria-label={`Eliminar ${doc.filename}`}
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
                     </td>
                   </tr>
                 ))}
               </tbody>
             </table>
           </div>
-        </div>
-      )}
+        )}
+      </div>
+
+      <ConfirmDialog
+        open={confirmDelete !== null}
+        title="¿Eliminar este documento?"
+        description="Se borrarán también sus fragmentos, sugerencias e historial. Esta acción no se puede deshacer."
+        itemName={docs.find((d) => d.id === confirmDelete)?.filename}
+        loading={deletingId !== null}
+        onConfirm={() => confirmDelete && handleDeleteDoc(confirmDelete)}
+        onCancel={() => setConfirmDelete(null)}
+      />
     </div>
   );
 }
 
 // ── Pestaña "Documentos de referencia" ────────────────────────────────────────
 
-const REF_STATUS_MAP: Record<
-  string,
-  { bg: string; text: string; dot: string; label: string }
-> = {
-  needs_review: { bg: "bg-surface-2", text: "text-ink", dot: "bg-ink-3", label: "Pendiente" },
-  processing: {
-    bg: "bg-warning-soft",
-    text: "text-warning-fg",
-    dot: "bg-warning animate-pulse",
-    label: "Procesando",
-  },
-  approved: { bg: "bg-success-soft", text: "text-success-fg", dot: "bg-success", label: "Disponible" },
-  rejected: { bg: "bg-danger-soft", text: "text-danger-fg", dot: "bg-danger", label: "Rechazado" },
-  archived: { bg: "bg-info-soft", text: "text-info-fg", dot: "bg-info", label: "Archivado" },
+/* Mismo distintivo de estado que los documentos curados; sólo cambia el
+   vocabulario de los estados que significan otra cosa en el corpus. */
+const REF_STATUS_LABELS: Record<string, string> = {
+  needs_review: "Pendiente",
+  approved: "Disponible",
 };
 
 const REF_FILE_EMOJI: Record<string, string> = { pdf: "📖", docx: "📝", txt: "📃" };
@@ -762,7 +740,7 @@ function ReferenceDocsPanel() {
         const sorted = [...data.items].sort(
           (a, b) => new Date(b.uploaded_at).getTime() - new Date(a.uploaded_at).getTime(),
         );
-        setDocs(sorted);
+        setDocs((prev) => keepIfSame(prev, sorted));
         setTotal(data.total);
 
         const hasProcessing = data.items.some(
@@ -807,6 +785,7 @@ function ReferenceDocsPanel() {
     try {
       await deleteReferenceDoc(id);
       setDocs((prev) => prev.filter((d) => d.id !== id));
+      setTotal((t) => Math.max(0, t - 1));
     } catch {
       // silent
     } finally {
@@ -875,15 +854,6 @@ function ReferenceDocsPanel() {
     if (inputRef.current) inputRef.current.value = "";
   };
 
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center h-64 text-ink-3 gap-2">
-        <RefreshCw className="w-5 h-5 animate-spin" />
-        <span className="text-sm">Cargando documentos de referencia...</span>
-      </div>
-    );
-  }
-
   return (
     <div className="space-y-4">
       {/* Panel de subida, colapsable */}
@@ -924,7 +894,7 @@ function ReferenceDocsPanel() {
               }}
               onClick={() => !file && inputRef.current?.click()}
               className={`
-                border-2 border-dashed rounded-xl p-6 text-center transition-all
+                border-2 border-dashed rounded-2xl p-8 text-center transition-all
                 ${!file ? "cursor-pointer" : ""}
                 ${dragging ? "border-brand bg-brand-soft" : "border-line hover:border-brand/40 hover:bg-surface-2"}
               `}
@@ -942,7 +912,7 @@ function ReferenceDocsPanel() {
 
               {!file ? (
                 <div>
-                  <div className="w-12 h-12 bg-brand-soft rounded-xl flex items-center justify-center mx-auto mb-3">
+                  <div className="w-12 h-12 bg-brand-soft rounded-2xl flex items-center justify-center mx-auto mb-3">
                     <BookOpen className="w-6 h-6 text-brand" />
                   </div>
                   <p className="text-ink font-medium text-sm mb-1">
@@ -974,7 +944,7 @@ function ReferenceDocsPanel() {
             </div>
 
             {errorMsg && uploadState !== "error" && (
-              <div className="flex items-center gap-2 bg-danger-soft border border-transparent text-danger-fg text-sm rounded-xl px-4 py-3 mt-3">
+              <div className="note note-danger mt-3">
                 <AlertCircle className="w-4 h-4 shrink-0" />
                 {errorMsg}
               </div>
@@ -996,7 +966,7 @@ function ReferenceDocsPanel() {
             )}
 
             {uploadState === "success" && (
-              <div className="flex items-center gap-2 bg-success-soft border border-transparent text-success-fg text-sm rounded-xl px-4 py-3 mt-3">
+              <div className="note note-success mt-3 items-center">
                 <CheckCircle2 className="w-4 h-4 shrink-0 text-success-fg" />
                 <span>¡Documento de referencia subido!</span>
                 <button
@@ -1009,7 +979,7 @@ function ReferenceDocsPanel() {
             )}
 
             {uploadState === "error" && (
-              <div className="flex items-center gap-2 bg-danger-soft border border-transparent text-danger-fg text-sm rounded-xl px-4 py-3 mt-3">
+              <div className="note note-danger mt-3 items-center">
                 <AlertCircle className="w-4 h-4 shrink-0" />
                 {errorMsg}
                 <button
@@ -1036,15 +1006,15 @@ function ReferenceDocsPanel() {
 
       {/* Listado */}
       <div className="card overflow-hidden">
-        <div className="flex items-center justify-between px-5 py-4 border-b border-line">
+        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-line px-5 py-4">
           <div className="flex items-center gap-2">
             <BookOpen className="w-4 h-4 text-brand" />
-            <h2 className="text-sm font-semibold text-ink">Documentos de referencia</h2>
+            <h2 className="section-title">Documentos de referencia</h2>
             <span className="text-xs text-ink-3">({docs.length})</span>
           </div>
           <div className="flex items-center gap-2">
             {isPending && (
-              <span className="flex items-center gap-1.5 text-xs text-warning-fg bg-warning-soft border border-transparent rounded-full px-3 py-1">
+              <span className="chip chip-warning">
                 <RefreshCw className="w-3 h-3 animate-spin" />
                 Pendiente de procesamiento
               </span>
@@ -1052,7 +1022,7 @@ function ReferenceDocsPanel() {
             <button
               onClick={handleProcess}
               disabled={processing}
-              className="flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-lg bg-brand text-brand-fg hover:bg-brand-hover disabled:opacity-50 transition-colors"
+              className="btn btn-sm btn-soft"
             >
               {processing ? (
                 <Loader2 className="w-3 h-3 animate-spin" />
@@ -1064,7 +1034,15 @@ function ReferenceDocsPanel() {
           </div>
         </div>
 
-        {docs.length === 0 ? (
+        {loading ? (
+          <>
+            <LoadingLabel>Cargando documentos de referencia</LoadingLabel>
+            <SkeletonTable
+              rows={4}
+              cols={["w-1/3", "w-12", "w-24", "w-16", "w-28", "w-8"]}
+            />
+          </>
+        ) : docs.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-16 text-center">
             <div className="w-14 h-14 bg-surface-2 rounded-2xl flex items-center justify-center mb-4">
               <BookOpen className="w-7 h-7 text-ink-3" />
@@ -1082,94 +1060,64 @@ function ReferenceDocsPanel() {
             </button>
           </div>
         ) : (
-          <table className="w-full text-sm">
-            <thead className="bg-surface-2 border-b border-line">
-              <tr>
-                <th className="px-4 py-3 text-left font-medium text-ink-2">Documento</th>
-                <th className="px-4 py-3 text-left font-medium text-ink-2">Tipo</th>
-                <th className="px-4 py-3 text-left font-medium text-ink-2">Estado</th>
-                <th className="px-4 py-3 text-left font-medium text-ink-2">Tamaño</th>
-                <th className="px-4 py-3 text-left font-medium text-ink-2">Subido</th>
-                <th className="px-4 py-3 text-right font-medium text-ink-2">Acción</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-line">
-              {docs.map((doc) => {
-                const s = REF_STATUS_MAP[doc.status] ?? REF_STATUS_MAP.needs_review;
-                return (
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead className="bg-surface-2 border-b border-line">
+                <tr>
+                  <th className="table-head">Documento</th>
+                  <th className="table-head">Tipo</th>
+                  <th className="table-head">Estado</th>
+                  <th className="table-head">Tamaño</th>
+                  <th className="table-head">Subido</th>
+                  <th className="table-head text-right">Acciones</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-line">
+                {docs.map((doc) => (
                   <tr
                     key={doc.id}
                     onClick={() => navigate(`/docs/${doc.id}`)}
                     className="hover:bg-surface-2 transition-colors cursor-pointer"
                   >
-                    <td className="px-4 py-3">
+                    <td className="table-cell">
                       <div className="flex items-center gap-2">
-                        <span className="text-base">{REF_FILE_EMOJI[doc.file_type] ?? "📖"}</span>
+                        <span className="text-base">
+                          {REF_FILE_EMOJI[doc.file_type] ?? "📖"}
+                        </span>
                         <span className="font-medium text-ink truncate max-w-xs">
                           {doc.filename}
                         </span>
-                        <span className="inline-flex items-center gap-1 text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-warning-soft text-warning-fg">
-                          📖 Referencia
-                        </span>
+                        <span className="chip chip-warning">📖 Referencia</span>
                       </div>
                     </td>
-                    <td className="px-4 py-3">
+                    <td className="table-cell">
                       <span className="uppercase text-xs font-semibold text-ink-3 tracking-wide">
                         {doc.file_type}
                       </span>
                     </td>
-                    <td className="px-4 py-3">
-                      <span
-                        className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium ${s.bg} ${s.text}`}
-                      >
-                        <span className={`w-1.5 h-1.5 rounded-full ${s.dot}`} />
-                        {s.label}
-                      </span>
+                    <td className="table-cell">
+                      <DocBadge status={doc.status} labels={REF_STATUS_LABELS} />
                     </td>
-                    <td className="px-4 py-3 text-ink-2">{fmtSize(doc.size_bytes)}</td>
-                    <td className="px-4 py-3 text-ink-2 text-xs">{fmtDate(doc.uploaded_at)}</td>
-                    <td className="px-4 py-3 text-right">
-                      {confirmDelete === doc.id ? (
-                        <div className="flex items-center justify-end gap-1.5">
-                          <span className="text-xs text-ink-2">¿Eliminar?</span>
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              handleDelete(doc.id);
-                            }}
-                            disabled={deleting === doc.id}
-                            className="text-xs font-medium px-2 py-1 rounded bg-danger-soft text-danger-fg hover:bg-danger-soft transition-colors"
-                          >
-                            {deleting === doc.id ? <Loader2 className="w-3 h-3 animate-spin" /> : "Sí"}
-                          </button>
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              setConfirmDelete(null);
-                            }}
-                            className="text-xs font-medium px-2 py-1 rounded bg-surface-2 text-ink-2 hover:bg-surface-3 transition-colors"
-                          >
-                            No
-                          </button>
-                        </div>
-                      ) : (
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setConfirmDelete(doc.id);
-                          }}
-                          className="p-1.5 rounded-md text-ink-3 hover:text-danger-fg hover:bg-danger-soft transition-colors"
-                          title="Eliminar referencia"
-                        >
-                          <Trash2 className="w-4 h-4" />
-                        </button>
-                      )}
+                    <td className="table-cell tnum">{fmtSize(doc.size_bytes)}</td>
+                    <td className="table-cell text-xs">{fmtDate(doc.uploaded_at)}</td>
+                    <td className="table-cell text-right">
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setConfirmDelete(doc.id);
+                        }}
+                        className="btn-icon h-8 w-8 hover:bg-danger-soft hover:text-danger-fg"
+                        title="Eliminar referencia"
+                        aria-label={`Eliminar ${doc.filename}`}
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
                     </td>
                   </tr>
-                );
-              })}
-            </tbody>
-          </table>
+                ))}
+              </tbody>
+            </table>
+          </div>
         )}
 
         {total > LIMIT && (
@@ -1196,6 +1144,16 @@ function ReferenceDocsPanel() {
           </div>
         )}
       </div>
+
+      <ConfirmDialog
+        open={confirmDelete !== null}
+        title="¿Eliminar este documento de referencia?"
+        description="Dejará de usarse como criterio del agente y se borrarán sus fragmentos. Esta acción no se puede deshacer."
+        itemName={docs.find((d) => d.id === confirmDelete)?.filename}
+        loading={deleting !== null}
+        onConfirm={() => confirmDelete && handleDelete(confirmDelete)}
+        onCancel={() => setConfirmDelete(null)}
+      />
     </div>
   );
 }
