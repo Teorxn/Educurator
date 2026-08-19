@@ -105,6 +105,38 @@ docker compose exec api python seed.py
 | admin@educurator.dev | admin1234 | admin |
 | instructor@educurator.dev | instructor1234 | instructor |
 
+### Confianza del chat
+
+El chip que acompaña cada respuesta combina dos señales medidas con el mismo
+modelo de embeddings (ninguna cuesta una llamada extra al LLM):
+
+- **Pertinencia** (pregunta ↔ contexto): ¿el material recuperado tiene que
+  ver con lo que se preguntó?
+- **Respaldo** (respuesta ↔ contexto): ¿lo respondido está efectivamente en
+  esos documentos? Es lo que rescata a las preguntas genéricas: "resume este
+  documento" no se parece al documento, pero su respuesta sí.
+
+Ambas se recalibran contra el rango real del modelo, porque un coseno de
+0.70 ya es un match excelente y mostrarlo crudo subestima. Detalle y
+mediciones en [backend/app/rag/confidence.py](backend/app/rag/confidence.py).
+
+Si la respuesta se apoyó en el respaldo de Postgres (sin búsqueda vectorial)
+no hay nada que medir y el chip lo dice, en vez de inventar un porcentaje.
+
+### Reindexar ChromaDB
+
+Los chunks se escriben al índice vectorial sólo dentro del pipeline, así que
+si el índice se pierde o se desincroniza los documentos ya procesados no
+vuelven solos y el chat deja de encontrar contexto. `reindex_chroma.py` lo
+reconstruye desde Postgres (tabla `document_chunks`) y es idempotente:
+
+```bash
+cd backend
+python reindex_chroma.py            # sube sólo lo que falta
+python reindex_chroma.py --dry-run  # reporta sin escribir
+python reindex_chroma.py --force    # re-embebe todo
+```
+
 ---
 
 ## Flujo de uso
@@ -218,6 +250,9 @@ MAX_BATCH_UPLOAD=10                    # documentos por carga múltiple
 # Chat RAG y costos de IA
 CHAT_TOP_K=5
 CHAT_MIN_SIMILARITY=0.25
+CHAT_CONFIDENCE_FLOOR=0.20             # anclas de calibración: propiedad del
+CHAT_CONFIDENCE_CEILING=0.75           # modelo de embeddings, re-medir si cambia
+CHAT_CONFIDENCE_GROUNDING_WEIGHT=0.55  # peso de respuesta↔contexto vs pregunta↔contexto
 LLM_COST_PER_1K_INPUT_TOKENS=0.0001    # tarifa del modelo configurado
 LLM_COST_PER_1K_OUTPUT_TOKENS=0.0004
 

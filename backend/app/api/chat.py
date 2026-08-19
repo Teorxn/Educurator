@@ -33,6 +33,7 @@ from app.models.models import (
     DocumentChunk,
     User,
 )
+from app.rag.confidence import compute_confidence
 from app.services.access import can_access_doc, visible_docs_filter
 
 logger = logging.getLogger(__name__)
@@ -76,6 +77,9 @@ class ChatResponse(BaseModel):
     answer: str
     sources: list[ChatSource]
     confidence: float
+    # False cuando hubo contexto pero no búsqueda vectorial (respaldo de
+    # Postgres): `confidence` no significa nada y la UI no debe mostrarlo.
+    confidence_available: bool = True
     has_context: bool
     model: str | None = None
     # Documentos dentro del alcance de la búsqueda (transparencia para el
@@ -116,6 +120,7 @@ class ChatHistoryEntry(BaseModel):
     answer: str
     has_context: bool
     confidence: float
+    confidence_available: bool = True
     sources: list[ChatSource]
     model: str | None = None
     # Se guarda en la fila desde el principio, pero no se devolvía: al reabrir
@@ -172,11 +177,14 @@ def _retrieve_chunks(question: str, allowed_doc_ids: list[str], top_k: int) -> l
         meta = res["metadatas"][0][i] if res.get("metadatas") else {}
         content = res["documents"][0][i] if res.get("documents") else ""
         similarity = 0.0
+        embedding: list[float] | None = None
         try:
             if embs is not None and len(embs[0]) > i and embs[0][i] is not None:
-                similarity = float(_cosine_similarity(query_emb, embs[0][i]))
+                embedding = [float(x) for x in embs[0][i]]
+                similarity = float(_cosine_similarity(query_emb, embedding))
         except Exception:
             similarity = 0.0
+            embedding = None
         out.append(
             {
                 "chunk_id": chunk_id,
@@ -184,6 +192,9 @@ def _retrieve_chunks(question: str, allowed_doc_ids: list[str], top_k: int) -> l
                 "chunk_index": int((meta or {}).get("chunk_index", 0)),
                 "content": content or "",
                 "similarity": round(similarity, 4),
+                # Se conserva para medir después el respaldo de la respuesta
+                # sin volver a pedirlo ni recalcularlo.
+                "embedding": embedding,
             }
         )
 
@@ -223,11 +234,41 @@ async def _fallback_chunks_from_postgres(
             "doc_id": doc_id,
             "chunk_index": c.chunk_index,
             "content": c.content,
-            # Sin ranking semántico: valor neutro, no comparable al de Chroma.
-            "similarity": 0.5,
+            # Estos chunks no pasaron por el recuperador: no hay similitud
+            # que reportar. El 0.0 es un marcador, no una medición — quien
+            # decide qué mostrar es la bandera is_fallback.
+            "similarity": 0.0,
+            "is_fallback": True,
         }
         for c in rows
     ]
+
+
+def _answer_grounding(answer: str, chunks: list[dict]) -> float | None:
+    """Cuánto de la respuesta está respaldado por el contexto recuperado.
+
+    Similitud máxima entre la respuesta y los chunks que la fundamentaron.
+    Es la señal que separa una respuesta que sale de los documentos (0.55–
+    0.82 medido sobre respuestas reales) de una inventada (~0.14).
+
+    Bloqueante (sentence-transformers) → se ejecuta en un thread. Devuelve
+    None si no hay embeddings a mano: la confianza cae entonces a la
+    pertinencia sola, que es una señal peor pero real.
+    """
+    embeddings = [c["embedding"] for c in chunks if c.get("embedding")]
+    if not embeddings or not answer.strip():
+        return None
+
+    try:
+        from app.rag.embeddings import get_embedding_model
+        from app.rag.redundancy import _cosine_similarity
+
+        answer_emb = get_embedding_model().encode(answer).tolist()
+        return max(float(_cosine_similarity(answer_emb, e)) for e in embeddings)
+    except Exception:
+        # Que no se pueda medir el respaldo no justifica perder la respuesta.
+        logger.exception("No se pudo medir el respaldo de la respuesta")
+        return None
 
 
 def _title_from_question(question: str) -> str:
@@ -283,6 +324,7 @@ async def _save_history(
     model: str | None,
     searched_documents: int,
     conversation: ChatConversation | None = None,
+    confidence_available: bool = True,
 ) -> None:
     """Persiste la pregunta/respuesta para el contador y el panel de historial.
 
@@ -297,6 +339,7 @@ async def _save_history(
             answer=answer,
             has_context=has_context,
             confidence=confidence,
+            confidence_available=confidence_available,
             sources=[s.model_dump() for s in sources],
             model=model,
             searched_documents=searched_documents,
@@ -435,7 +478,22 @@ async def chat(
         )
         for c in relevant
     ]
-    confidence = round(sum(c["similarity"] for c in relevant) / len(relevant), 4)
+    # El respaldo de Postgres no pasa por el recuperador: hay contexto, pero
+    # ninguna similitud que medir. Mostrar un porcentaje ahí sería inventarlo.
+    confidence_available = not any(c.get("is_fallback") for c in relevant)
+    similarities = [c["similarity"] for c in relevant]
+
+    def _confidence(grounding: float | None) -> float:
+        """Confianza final. `grounding` es None cuando no se puede medir."""
+        if not confidence_available:
+            return 0.0
+        return compute_confidence(
+            similarities,
+            floor=settings.CHAT_CONFIDENCE_FLOOR,
+            ceiling=settings.CHAT_CONFIDENCE_CEILING,
+            grounding=grounding,
+            grounding_weight=settings.CHAT_CONFIDENCE_GROUNDING_WEIGHT,
+        )
 
     # ── 3. Generación fundamentada ────────────────────────────────────────
     from app.agents.graph import get_llm
@@ -451,6 +509,9 @@ async def chat(
             "No hay un modelo de lenguaje configurado, pero encontré estos "
             f"fragmentos relevantes en tus documentos:\n\n{extract}"
         )
+        # Sin respaldo medible: la "respuesta" son los extractos mismos, así
+        # que compararla con el contexto daría 1.0 por construcción.
+        confidence = _confidence(None)
         await _save_history(
             db,
             current_user.id,
@@ -458,6 +519,7 @@ async def chat(
             no_llm_answer,
             has_context=True,
             confidence=confidence,
+            confidence_available=confidence_available,
             sources=sources,
             model=None,
             searched_documents=len(allowed_ids),
@@ -467,6 +529,7 @@ async def chat(
             answer=no_llm_answer,
             sources=sources,
             confidence=confidence,
+            confidence_available=confidence_available,
             has_context=True,
             model=None,
             searched_documents=len(allowed_ids),
@@ -530,10 +593,19 @@ async def chat(
             "Intenta de nuevo en unos segundos.",
         )
 
+    # La confianza se cierra aquí: hasta no tener la respuesta no se puede
+    # medir cuánto de ella está respaldado por los documentos.
+    grounding = (
+        await asyncio.to_thread(_answer_grounding, answer, relevant)
+        if confidence_available
+        else None
+    )
+    confidence = _confidence(grounding)
+
     logger.info(
-        "💬 Chat respondido (%d fuentes, confianza %.2f): '%s'",
+        "💬 Chat respondido (%d fuentes, confianza %s): '%s'",
         len(sources),
-        confidence,
+        f"{confidence:.2f}" if confidence_available else "n/d (respaldo)",
         body.question[:60],
     )
     await _save_history(
@@ -543,6 +615,7 @@ async def chat(
         answer,
         has_context=True,
         confidence=confidence,
+        confidence_available=confidence_available,
         sources=sources,
         model=str(model_name),
         searched_documents=len(allowed_ids),
@@ -552,6 +625,7 @@ async def chat(
         answer=answer,
         sources=sources,
         confidence=confidence,
+        confidence_available=confidence_available,
         has_context=True,
         model=str(model_name),
         searched_documents=len(allowed_ids),
@@ -610,6 +684,7 @@ async def get_chat_history(
             answer=r.answer,
             has_context=r.has_context,
             confidence=r.confidence,
+            confidence_available=r.confidence_available,
             sources=[ChatSource(**s) for s in (r.sources or [])],
             model=r.model,
             searched_documents=r.searched_documents,

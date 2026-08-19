@@ -71,6 +71,16 @@ class Settings(BaseSettings):
     # HU-31 — Chat RAG sobre la base de conocimiento
     CHAT_TOP_K: int = 5  # Chunks recuperados por pregunta
     CHAT_MIN_SIMILARITY: float = 0.25  # Umbral para considerar contexto relevante
+    # Anclas para calibrar la confianza mostrada al docente. Son propiedad
+    # del modelo de embeddings (medidas sobre el corpus real): el piso es el
+    # techo del ruido y el tope, el mejor caso alcanzable. Si se cambia
+    # EMBEDDING_MODEL_NAME hay que volver a medirlas — ver app/rag/confidence.py.
+    CHAT_CONFIDENCE_FLOOR: float = 0.20
+    CHAT_CONFIDENCE_CEILING: float = 0.75
+    # Peso del respaldo (respuesta↔contexto) frente a la pertinencia
+    # (pregunta↔contexto). En 0.0 la confianza vuelve a depender sólo de la
+    # búsqueda, que castiga las preguntas genéricas ("resume este documento").
+    CHAT_CONFIDENCE_GROUNDING_WEIGHT: float = 0.55
 
     # Langfuse — tracing y observabilidad
     LANGFUSE_PUBLIC_KEY: str = ""

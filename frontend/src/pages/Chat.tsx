@@ -18,6 +18,8 @@ import {
   PanelLeftOpen,
   Pencil,
   Check,
+  ShieldCheck,
+  ShieldAlert,
 } from "lucide-react";
 import {
   askChat,
@@ -52,6 +54,57 @@ interface ChatSuggestion {
   question: string;
   docId: string;
   docLabel: string;
+}
+
+/**
+ * Chip de confianza: qué tan bien respaldada está la respuesta en los
+ * documentos del docente.
+ *
+ * El porcentaje solo nunca fue suficiente. Un "62%" se lee como un reprobado
+ * escolar cuando en realidad describe una respuesta bien fundamentada, así
+ * que el número va acompañado de la etiqueta que lo interpreta (y, según el
+ * sistema de diseño, el color nunca va solo: icono + texto siempre).
+ */
+function ConfidenceChip({
+  confidence,
+  available = true,
+}: {
+  confidence: number;
+  available?: boolean;
+}) {
+  // Sin búsqueda vectorial no hay nada que medir: decirlo es más útil que
+  // mostrar un porcentaje que no significa nada.
+  if (!available) {
+    return (
+      <span
+        className="chip chip-neutral"
+        title="La respuesta se apoyó en el contenido del documento, pero sin búsqueda semántica no hay confianza que medir."
+      >
+        <HelpCircle className="h-3.5 w-3.5" />
+        Confianza no medible
+      </span>
+    );
+  }
+
+  const pct = Math.round(confidence * 100);
+  const { style, Icon, label } =
+    pct >= 75
+      ? { style: "chip-success", Icon: ShieldCheck, label: "alta" }
+      : pct >= 50
+        ? { style: "chip-info", Icon: ShieldCheck, label: "media" }
+        : { style: "chip-warning", Icon: ShieldAlert, label: "baja" };
+
+  return (
+    <span
+      className={`chip ${style}`}
+      title={`Qué tan parecido es el contenido encontrado a tu pregunta. Confianza ${label}: revisa las fuentes citadas${
+        pct < 50 ? " — aquí conviene especialmente verificarlas" : ""
+      }.`}
+    >
+      <Icon className="h-3.5 w-3.5" />
+      Confianza {label} · {pct}%
+    </span>
+  );
 }
 
 /** Documentos que el agente ya procesó (los únicos consultables). */
@@ -262,6 +315,7 @@ export default function Chat() {
             answer: m.answer,
             sources: m.sources,
             confidence: m.confidence,
+            confidence_available: m.confidence_available,
             has_context: m.has_context,
             model: m.model,
             searched_documents: m.searched_documents,
@@ -636,9 +690,10 @@ export default function Chat() {
 
                       {t.answer.has_context ? (
                         <div className="mt-2.5 flex flex-wrap items-center gap-3">
-                          <span className="chip chip-brand">
-                            Confianza: {Math.round(t.answer.confidence * 100)}%
-                          </span>
+                          <ConfidenceChip
+                            confidence={t.answer.confidence}
+                            available={t.answer.confidence_available}
+                          />
                           {t.answer.model && (
                             <span className="text-xs text-ink-3">
                               {t.answer.model}

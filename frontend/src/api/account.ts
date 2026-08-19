@@ -158,6 +158,8 @@ export interface ChatAnswer {
   answer: string;
   sources: ChatSource[];
   confidence: number;
+  /** false = hubo contexto pero no búsqueda vectorial: `confidence` no aplica */
+  confidence_available?: boolean;
   has_context: boolean;
   model: string | null;
   /** Documentos dentro del alcance de la búsqueda */
@@ -185,6 +187,8 @@ export interface ChatHistoryEntry {
   answer: string;
   has_context: boolean;
   confidence: number;
+  /** false = hubo contexto pero no búsqueda vectorial: `confidence` no aplica */
+  confidence_available?: boolean;
   sources: ChatSource[];
   model: string | null;
   /** Documentos dentro del alcance de la búsqueda */

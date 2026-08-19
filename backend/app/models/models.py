@@ -6,7 +6,7 @@ from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, String, Te
 from sqlalchemy import Enum as SAEnum
 from sqlalchemy.dialects.postgresql import JSON, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
-from sqlalchemy.sql import func
+from sqlalchemy.sql import func, text
 
 from app.database import Base
 
@@ -397,6 +397,12 @@ class ChatHistory(Base):
     answer: Mapped[str] = mapped_column(Text, nullable=False)
     has_context: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     confidence: Mapped[float] = mapped_column(Float, default=0.0, nullable=False)
+    # False cuando la respuesta se apoyó en el respaldo de Postgres: hubo
+    # contexto, pero no búsqueda vectorial, así que no hay confianza que
+    # medir. Sin este dato la UI tendría que inventar un porcentaje.
+    confidence_available: Mapped[bool] = mapped_column(
+        Boolean, default=True, nullable=False, server_default=text("true")
+    )
     sources: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
     model: Mapped[str | None] = mapped_column(String(100), nullable=True)
     searched_documents: Mapped[int] = mapped_column(Integer, default=0, nullable=False)

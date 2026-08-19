@@ -34,18 +34,26 @@ services:
     restart: unless-stopped
 
   chromadb:
-    image: chromadb/chroma:latest
+    # Versión FIJA a propósito: 'latest' saltó de 0.x a 1.x y con ello cambió
+    # el directorio de datos y la API, dejando el índice vacío sin ningún
+    # error visible (el chat respondía "no encontré información").
+    image: chromadb/chroma:1.0.0
     ports:
       - "8001:8000"
     volumes:
-      - chroma_data:/chroma/chroma
+      # Chroma 1.x persiste en /data (0.x usaba /chroma/chroma). Montar la
+      # ruta vieja hace que el índice viva en la capa efímera del contenedor
+      # y se pierda en cada recreación.
+      - chroma_data:/data
     healthcheck:
+      # La imagen 1.x no trae python ni curl (es un binario Rust sobre Debian),
+      # así que el chequeo va por /dev/tcp de bash.
       test:
         [
           "CMD",
-          "python",
+          "bash",
           "-c",
-          "import urllib.request, sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/api/v1/health').status == 200 else 1)",
+          'exec 3<>/dev/tcp/127.0.0.1/8000 && printf "GET /api/v2/heartbeat HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n" >&3 && grep -q "200 OK" <&3',
         ]
       interval: 10s
       timeout: 5s

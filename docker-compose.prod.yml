@@ -88,16 +88,21 @@ services:
     restart: always
 
   chromadb:
-    image: chromadb/chroma:latest
+    # Versión fija: ver nota en docker-compose.yml (el salto 0.x → 1.x cambió
+    # el directorio de datos y vació el índice de forma silenciosa).
+    image: chromadb/chroma:1.0.0
     volumes:
-      - chroma_data:/chroma/chroma
+      # Chroma 1.x persiste en /data, no en /chroma/chroma
+      - chroma_data:/data
     healthcheck:
+      # Sin python ni curl en la imagen 1.x: ver nota en docker-compose.yml.
+      # Aquí importa de verdad: 'api' arranca con condition: service_healthy.
       test:
         [
           "CMD",
-          "python",
+          "bash",
           "-c",
-          "import urllib.request, sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/api/v2/heartbeat').status == 200 else 1)",
+          'exec 3<>/dev/tcp/127.0.0.1/8000 && printf "GET /api/v2/heartbeat HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n" >&3 && grep -q "200 OK" <&3',
         ]
       interval: 10s
       timeout: 5s
